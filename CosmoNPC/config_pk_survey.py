@@ -8,21 +8,21 @@ CONFIG = {
     "correlation_mode": "cross",  # ["auto", "cross"]: Auto or cross correlation
 
     # Geometry
-    "geometry": "box-like",  # "survey-like" or "box-like"
+    "geometry": "survey-like",  # "survey-like" or "box-like"
 
     # Catalogs
     "catalogs": {
-        "data_a": "/Users/xieyunchen/Downloads/cut_fits/molino.z0.0.fiducial.nbody1.hod0.npy",
-        "randoms_a": None,
-        "data_b": "/Users/xieyunchen/Downloads/cut_fits/molino.z0.0.fiducial.nbody1.hod0.npy",
-        "randoms_b": None,
+        "data_a": "/Users/xieyunchen/Downloads/BOSS_fits/galaxy_DR12v5_LOWZ_South.fits",
+        "randoms_a": "/Users/xieyunchen/Downloads/BOSS_fits/random0_DR12v5_LOWZ_South.fits",
+        "data_b": "/Users/xieyunchen/Downloads/BOSS_fits/galaxy_DR12v5_LOWZ_South.fits",
+        "randoms_b": "/Users/xieyunchen/Downloads/BOSS_fits/random0_DR12v5_LOWZ_South.fits",
     },
 
     # Column names
-    "column_names": ["x", "y", "z"],  # For box-like catalog; "w" is optional
+    # "column_names": ["x", "y", "z"],  # For box-like catalog; "w" is optional
     # Warning: for box-like catalog, the order of columns here must match that in the .npy files
 
-    # "column_names": ["x", "y", "z", "w_comp", "w_fkp", "nz"], # For survey-like catalog
+    "column_names": ["RA", "DEC", "Z", "WEIGHT_FKP", "WEIGHT_SYSTOT", "WEIGHT_NOZ","WEIGHT_CP","NZ"], # For survey-like catalog
 
     # RSD
     "rsd": [0, 0, 1],  # Unit 3-vector for redshift space distortion (RSD), box-like only
@@ -31,43 +31,48 @@ CONFIG = {
     # nmesh: Grid points (nx, ny, nz)
     "nmesh": [256, 256, 256],
     # boxsize: Grid size (Mpc/h)
-    "boxsize": [1000., 1000., 1000.],
+    "boxsize": [1800., 1800., 1800.],
     # sampler: Mesh sampling: "tsc", "cic", "pcs"
     "sampler": "tsc",
     # interlaced: Interlaced mesh sampling
-    "interlaced": True,
+    "interlaced": False,
 
     # Para_task
     # k_min: Min k (h/Mpc)
     "k_min": 0.0,
     # k_max: Max k (h/Mpc)
-    "k_max": 0.6,
+    "k_max": 0.3,
     # k_bins: k-space bins
-    "k_bins": 60,
+    "k_bins": 30,
     # poles: Multipole orders
-    "poles": [0, 2],
+    "poles": [0, 2, 4],
     # compensation: Mesh compensation
     "compensation": True,
     # normalization_scheme: Pk normalization, particle or mixed-mesh
-    "normalization_scheme": "particle",
+    "normalization_scheme": "mixed-mesh",
     # "fast_estimation_mode": "closed", # "off", "replace", "coexist", default "closed"
     # "fast_estimation_mode": "closed",
 
     # Para_cosmo (for .npy/box-like catalogs, cosmology parameters not used)
     "cosmology": {
-        "h": 0.6777,           # Hubble parameter
-        "Omega0": 0.31377,     # Matter density
-        "Omega_b": 0.048     # Baryon density
+        "h": 0.676,           # Hubble parameter
+        "Omega0": 0.31,     # Matter density
+        "Omega0_b": 0.048,     # Baryon density
+        "Omega0_cdm": 0.259115,# CDM density
+        "n_s": 0.96,           # Scalar spectral index
+        "sigma8": 0.8288,      # Matter fluctuation amplitude
     },
 
     # Redshift range
     "z_range": [0.15, 0.43],
 
     # Comp_weight_plan
-    # scheme: "boss", "eboss" or "desi"
-    "scheme": "boss",
+    # scheme: None, "boss", "eboss" or "desi", this is important for correctly reading the necessary columns
     # name_alias: Weight column alias
-    # "name_alias": "sssssss",
+    "comp_weight_plan": {
+        "scheme": "boss",
+        "name_alias": None,
+    },
 
     # Output
     # output_dir: Output directory

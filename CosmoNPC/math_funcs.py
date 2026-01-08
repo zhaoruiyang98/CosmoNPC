@@ -1,23 +1,25 @@
 import numpy as np
+import sympy as sp
+import numexpr
 import gc
 
 """
 Get the distance of every mesh grid to the mesh-center in k-space for radial binning
 as well as get the normalized position of every mesh grid in k/x-space for spherical harmonics
 """
-def get_kgrid(cfield):
-    kgrid = [np.real(kk) for kk in cfield.x]
-    knorm = np.sqrt(sum(np.real(kk)**2 for kk in cfield.x))
-    knorm[knorm == 0.] = np.inf
-    normalized_kgrid = []
-    for k in kgrid:
-        normalized_kgrid.append(k / knorm)
-    # reset knorm, honestly, it's stupid...
-    # I have some new idea to avoid this but i'm lazy to validate it
-    knorm[knorm == np.inf] = 0.
-    return normalized_kgrid, knorm
+# def get_kgrid(cfield):
+#     kgrid = [np.real(kk) for kk in cfield.x]
+#     knorm = np.sqrt(sum(np.real(kk)**2 for kk in cfield.x))
+#     knorm[knorm == 0.] = np.inf
+#     normalized_kgrid = []
+#     for k in kgrid:
+#         normalized_kgrid.append(k / knorm)
+#     # reset knorm, honestly, it's stupid...
+#     # I have some new idea to avoid this but i'm lazy to validate it
+#     knorm[knorm == np.inf] = 0.
+#     return normalized_kgrid, knorm
 
-def get_kgrid_new(cfield):
+def get_kgrid(cfield):
     kgrid = [np.real(kk) for kk in cfield.x]
     knorm = np.sqrt(sum(np.real(kk)**2 for kk in cfield.x))
     normalized_kgrid = []
@@ -39,8 +41,7 @@ def get_xgrid(rfield, boxcenter, boxsize, nmesh):
     return result
 
 
-
-def get_Ylm(l, m):
+def get_Ylm(l, m, Racah_normalized=False):
     """
     Return a function that computes the complex spherical
     harmonic of order (l,m)
@@ -51,6 +52,10 @@ def get_Ylm(l, m):
         the degree of the harmonic
     m : int
         the order of the harmonic; abs(m) <= l
+    Racah_normalized : bool, optional
+        if True, the returned function will expect Racah-normalized,
+        an additional factor of sqrt(4pi/(2l+1)) will be applied.
+        Default is False.
 
     Returns
     -------
@@ -62,9 +67,16 @@ def get_Ylm(l, m):
     References
     ----------
     https://en.wikipedia.org/wiki/Spherical_harmonics#Complex_form
+
+    Warning
+    -------
+    Spherical harmonics can not be defined at the origin (r=0).
+    The returned function will return sqrt{1/4\pi} for l=m=0 and 
+    return 0 for all other (l,m) at the origin.
+    This should not be a big issue since uasually we only need Ylm
+    with l>0 
+
     """
-    import sympy as sp
-    import numpy as np
 
     # Input validation
     l = int(l); m = int(m)
@@ -72,7 +84,8 @@ def get_Ylm(l, m):
         raise ValueError("abs(m) must be <= l")
 
     # the relevant cartesian and spherical symbols
-    x, y, z, r = sp.symbols('x y z r', real=True, positive=True)
+    x, y, z  = sp.symbols('x y z ', real=True)
+    r = sp.symbols('r', real = True, positive=True)
     xhat, yhat, zhat = sp.symbols('xhat yhat zhat', real=True)
     phi, theta = sp.symbols('phi theta')
 
@@ -82,13 +95,15 @@ def get_Ylm(l, m):
             (sp.cos(theta), z/sp.sqrt(x**2 + y**2 + z**2))]
 
     # the normalization factor
-    amp = sp.sqrt((2*l + 1)/(4 * np.pi) * sp.factorial(l - m)/sp.factorial(l + m))
+    amp = sp.sqrt((2*l + 1)/(4 * np.pi) * sp.factorial(l - abs(m))/sp.factorial(l + abs(m)))
 
     # the cos(theta) dependence encoded by the associated Legendre poly
-    expr = (-1)**m * sp.assoc_legendre(l, m, sp.cos(theta))
+    # Note: sympy's assoc_legendre already contains the Condon-Shortley phase (-1)^m
+    # https://docs.sympy.org/latest/modules/functions/special.html
+    expr = sp.assoc_legendre(l, abs(m), sp.cos(theta))
 
     # Explicitly handle phi dependence: e^(I*m*phi) = (cos(phi) + I*sin(phi))^m
-    phi_term = (sp.cos(phi) + sp.I * sp.sin(phi))**m
+    phi_term = (sp.cos(phi) + sp.I * sp.sin(phi))**abs(m)
 
     # Combine theta and phi dependence
     expr *= phi_term
@@ -98,9 +113,16 @@ def get_Ylm(l, m):
     expr = sp.together(expr).subs(x**2 + y**2 + z**2, r**2)
     expr = amp * expr.expand().subs([(x/r, xhat), (y/r, yhat), (z/r, zhat)])
 
+    # apply Racah normalization if requested
+    if Racah_normalized:
+        expr = expr * sp.sqrt(4 * np.pi / (2 * l + 1))
+
+    # For negative m, take complex conjugate and multiply by (-1)^m
+    if m < 0:
+        expr = (-1)**m * sp.conjugate(expr)
+
     # Further simplify to ensure no symbolic variables remain
     expr = sp.simplify(expr)
-
 
     # Convert to callable function using numexpr
     Ylm = sp.lambdify((xhat, yhat, zhat), expr, 'numexpr')
@@ -111,8 +133,6 @@ def get_Ylm(l, m):
     Ylm.m = m
 
     return Ylm
-
-
 
 
 
@@ -145,9 +165,7 @@ def get_legendre(ell, r_xhat, r_yhat, r_zhat):
     ----------
     https://en.wikipedia.org/wiki/Legendre_polynomials
     """
-    import sympy as sp
-    import numpy as np
-    import numexpr
+
 
 
     # Input validation
@@ -254,3 +272,37 @@ def CompensateCICShotnoise(w, v):
 
 def CompensateNGPShotnoise(w, v):
     return v
+
+
+def Compensate_bk_noise_tsc(w,v):
+    for i in range(3):
+        wi = w[i]
+        s = np.sin(0.5 * wi)**2
+        tmp = (np.sinc(0.5 * wi / np.pi)) ** 3
+        tmp[wi == 0.] = 1.
+        v = v * (1 - s + 2./15 * s**2) / tmp**2
+    return v
+
+def Compensate_bk_noise_cic(w,v):
+    for i in range(3):
+        wi = w[i]
+        s = np.sin(0.5 * wi)**2
+        tmp = (np.sinc(0.5 * wi / np.pi)) ** 2
+        tmp[wi == 0.] = 1.
+        v = v * (1 - 2./3 * s) / tmp**2
+    return v
+
+def Compensate_bk_noise_ngp(w,v):
+    return v
+
+
+def Compensate_bk_noise_pcs(w,v):
+    for i in range(3):
+        wi = w[i]
+        s = np.sin(0.5 * wi)**2
+        tmp = (np.sinc(0.5 * wi / np.pi)) ** 4
+        tmp[wi == 0.] = 1.
+        v = v * (1 - 4./3. * s + 2./5. * s**2 - 4./315. * s**3) / tmp**2
+    return v
+        
+        

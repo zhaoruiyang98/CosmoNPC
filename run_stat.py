@@ -4,6 +4,8 @@ import numpy as np
 from mpi4py import MPI
 from CosmoNPC import run_task
 from CosmoNPC.config_pk import CONFIG
+# from CosmoNPC.config_pk_survey import CONFIG
+
 
 # Initialize MPI
 comm = MPI.COMM_WORLD
@@ -24,27 +26,32 @@ def main():
 
 
 def validate_config(config):
-    assert config['sampler'] in ['cic', 'pcs', 'tsc'], \
-        "sampler should be 'cic', 'pcs', or 'tsc'"
+    assert config['sampler'] in ['ngp', 'cic', 'pcs', 'tsc'], \
+        "sampler should be 'ngp', 'cic', 'pcs', or 'tsc'"
     Cubic_Check(config['nmesh'], "nmesh", int)
     Cubic_Check(config['boxsize'], "boxsize", (float, int))
 
 # Function to check the catalogs based on geometry and correlation mode
-def catalog_check(catalogs, geometry, correlation_mode, statistic):
+def catalog_check(catalogs, geometry, correlation_mode, statistic, tracer_type=None):
     assert catalogs['data_a'] is not None, "data_a catalog must be provided"
-    if statistic in ['ok', 'bk_sco', 'bk_sugi']:
+    if statistic in ['pk', 'bk_sco', 'bk_sugi']:
         if correlation_mode == "auto":
             if geometry == "survey-like":
                 assert catalogs['randoms_a'] is not None, \
                     "randoms_a catalog must be provided for survey-like auto-correlation"
         elif correlation_mode == "cross":
-            # for now we only support cross-correlation between two different tracers
             assert catalogs['data_b'] is not None, "data_b catalog must be provided for cross-correlation"
             if geometry == "survey-like":
                 assert catalogs['randoms_a'] is not None, \
                     "randoms_a catalog must be provided for survey-like cross-correlation"
                 assert catalogs['randoms_b'] is not None, \
                     "randoms_b catalog must be provided for survey-like cross-correlation"
+    # Extra check for tracer_type == "abc" and statistic is bispectrum
+    if tracer_type == "abc" and statistic in ['bk_sco', 'bk_sugi']:
+        assert catalogs.get('data_c') is not None, "data_c catalog must be provided for tracer_type 'abc' in bispectrum"
+        if geometry == "survey-like":
+            assert catalogs.get('randoms_c') is not None, \
+                "randoms_c catalog must be provided for tracer_type 'abc' in survey-like bispectrum"
 
 # Function to check if a value is a cubic number
 def Cubic_Check(value, value_name, value_type):
@@ -57,3 +64,4 @@ def Cubic_Check(value, value_name, value_type):
 
 if __name__ == '__main__':
     main()
+

@@ -2,7 +2,9 @@ import numpy as np
 from numpy.lib import format
 from mpi4py import MPI
 import logging
-# from nbodykit.lab import *
+# from astropy import cosmology
+from astropy.cosmology import Planck18
+import astropy.units as u
 import warnings
 import gc
 import fitsio
@@ -62,14 +64,23 @@ def fits_reader(comm, files, column_names):
     dtype = [(col, 'f8') for col in column_names]
     result = np.array([], dtype=dtype)
     
-    for f in files:
+
+
+    for f in [files] if isinstance(files, str) else files:
+        print(f"Rank {rank} processing file: {f}")
         with fitsio.FITS(f) as fits:
             # Select appropriate HDU (prefer binary table)
             hdu = fits[1] if len(fits) > 1 else fits[0]
-            nrows = hdu.get_nrows()
+            nrows = hdu.get_nrows() 
 
             if rank == 0:
                 logging.info(f"File: {f}, Total Rows: {nrows}, All Columns: {hdu.get_colnames()}")
+
+            all_columns = hdu.get_colnames()
+            columns_to_read = [col for col in column_names if col in all_columns]
+            columns_to_read = comm.bcast(columns_to_read, root=0)
+            if rank == 0:
+                logging.info(f"Columns to read: {columns_to_read}")
 
             # Calculate row distribution
             base, extra = nrows // size, nrows % size
@@ -78,12 +89,7 @@ def fits_reader(comm, files, column_names):
             
             # Read data if this rank has rows
             if start < nrows:
-                data = hdu.read(rows=range(start, end), columns=column_names)
-                
-                # Verify all columns are present
-                if not all(col in data.dtype.names for col in column_names):
-                    missing = [col for col in column_names if col not in data.dtype.names]
-                    raise ValueError(f"Missing columns in {f}: {missing}")
+                data = hdu.read(rows=range(start, end), columns=columns_to_read)
                 
                 # Concatenate directly
                 result = np.concatenate([result, data]) if len(result) > 0 else data
@@ -98,83 +104,108 @@ def fits_reader(comm, files, column_names):
     return result
 
 
-
 def add_completeness_weight(dr, comp_weight_plan, catalog_type, comm):
     """
-    Adds a completeness weight column to the given DataFrame based on the specified scheme.
+    Add or update the 'WEIGHT' column in the catalog array to account for completeness weights.
 
-    Parameters:
-        dr (DataFrame): The input catalog (data or randoms) to which the completeness weight will be added.
-        comp_weight_plan (dict): A dictionary containing the following keys:
-            - "name_alias" (str): The column name to use as the completeness weight if it exists in `dr`.
-            - "scheme" (str): The weighting scheme to use if the alias is not found. 
-                Supported values are "boss" and "eboss".
-        catalog_type (str): The type of catalog ("data" or "randoms").
-        comm (MPI.Comm): The MPI communicator.
+    Parameters
+    ----------
+    dr : numpy.recarray
+        Input catalog as a record array. May be modified in-place or a new array returned
+        if the 'WEIGHT' column is added.
+    comp_weight_plan : dict
+        Completeness weight plan, must contain:
+            - "scheme": str or None. Allowed: None, "boss", "eboss", "desi".
+            - "name_alias": str or None. Name of an existing column to use as the weight.
+    catalog_type : str
+        Catalog type, must be "data" or "randoms".
+    comm : MPI.Comm
+        MPI communicator for logging.
 
-    Returns:
-        Series: The completeness weight column added to the catalog.
+    Returns
+    -------
+    dr : numpy.recarray
+        Catalog array with the 'WEIGHT' column added or updated.
 
-    Raises:
-        ValueError: If an invalid scheme is provided in `comp_weight_plan["scheme"]`.
+    Raises
+    ------
+    AssertionError
+        If catalog_type is not "data" or "randoms", or if scheme is not allowed.
+    ValueError
+        If both scheme and alias are specified, or if alias is not found, or if "desi" scheme is requested.
 
-    Logic:
-        1. Retrieve the rank of the current process using the MPI communicator.
-        2. Log the start of the completeness weight addition process for the given catalog type.
-        3. Check if the alias specified in `comp_weight_plan["name_alias"]` exists in the catalog columns:
-            - If it exists, use it as the completeness weight and log the action.
-        4. If the alias does not exist, check if a column named 'WEIGHT' already exists:
-            - If it exists, use it as the completeness weight and log the action.
-        5. If neither the alias nor 'WEIGHT' exists, check for the presence of the columns 
-           'WEIGHT_SYSTOT', 'WEIGHT_NOZ', and 'WEIGHT_CP':
-            - If the scheme is "boss", compute the completeness weight as:
-              WEIGHT = WEIGHT_SYSTOT * (WEIGHT_NOZ + WEIGHT_CP - 1.0)
-              Log the use of the BOSS-like scheme.
-            - If the scheme is "eboss", compute the completeness weight as:
-              WEIGHT = WEIGHT_SYSTOT * WEIGHT_NOZ * WEIGHT_CP
-              Log the use of the eBOSS-like scheme.
-            - If the scheme is invalid, log an error and raise a ValueError.
-        6. If none of the above conditions are met, set the completeness weight to 1.0 and log the action.
-        7. Return the computed completeness weight column.
+    Logic
+    -----
+    - If 'WEIGHT' column exists, use it as is and log this.
+    - If 'WEIGHT' column does not exist:
+        - Add a new 'WEIGHT' column initialized to zeros.
+        - If both scheme and alias are None, set all weights to 1.0 and log this.
+        - If alias is given and scheme is None:
+            - Use the specified alias column as weights if it exists, else raise ValueError.
+        - If alias is None and scheme is given:
+            - For "boss" scheme: for "data", compute weights as WEIGHT_SYSTOT * (WEIGHT_NOZ + WEIGHT_CP - 1.0); for "randoms", set to 1.0.
+            - For "eboss" scheme: for "data", compute weights as WEIGHT_SYSTOT * WEIGHT_NOZ * WEIGHT_CP; for "randoms", set to 1.0.
+            - For "desi" scheme: raise ValueError (to be implemented).
+        - If both scheme and alias are given, raise ValueError.
+    - Only rank 0 logs info messages.
     """
+
     rank = comm.Get_rank()
-    if rank == 0:
-        logging.info(f"Adding completeness weight for {catalog_type} catalog in rank {rank}")
 
-    alias = comp_weight_plan.get("name_alias") 
-    scheme = comp_weight_plan.get("scheme")
+    scheme = comp_weight_plan["scheme"]
+    alias = comp_weight_plan["name_alias"]
+    assert catalog_type in ["data", "randoms"], "catalog_type must be 'data' or 'randoms'"
+    assert scheme in [None, "boss", "eboss", "desi"]
 
-    if alias in dr.columns:
-        dr['WEIGHT'] = dr[alias]
-        if rank == 0:
-            logging.info(f"Using {alias} as the completeness weight")
-    elif 'WEIGHT' in dr.columns:
+
+    if "WEIGHT" in dr.dtype.names:
         if rank == 0:
             logging.info("Using existing WEIGHT column")
-    elif all(col in dr.columns for col in ['WEIGHT_SYSTOT', 'WEIGHT_NOZ', 'WEIGHT_CP']):
-        if scheme == "boss":
-            dr['WEIGHT'] = dr['WEIGHT_SYSTOT'] * (dr['WEIGHT_NOZ'] + dr['WEIGHT_CP'] - 1.0)
-            if rank == 0:
-                logging.info("Using BOSS-like completeness weight")
-        elif scheme == "eboss":
-            dr['WEIGHT'] = dr['WEIGHT_SYSTOT'] * dr['WEIGHT_NOZ'] * dr['WEIGHT_CP']
-            if rank == 0:
-                logging.info("Using eBOSS-like completeness weight")
-        else:
-            if rank == 0:
-                logging.error("Invalid scheme for completeness weight")
-            raise ValueError("Invalid scheme for completeness weight")
     else:
-        dr['WEIGHT'] = 1.0
-        if rank == 0:
-            logging.info("Setting completeness weight to 1.0")
+        dr = np.lib.recfunctions.append_fields(dr, 'WEIGHT', data=np.zeros(len(dr)), usemask=False)
+        if alias == None and scheme is None:
+            dr['WEIGHT'] = 1.0
+            if rank == 0:
+                logging.info("No completeness weight scheme or alias provided. Setting completeness weight to 1.0")
+        elif alias is not None and scheme is None:
+            if alias in dr.dtype.names:
+                dr['WEIGHT'] = dr[alias]
+                if rank == 0:
+                    logging.info(f"Using {alias} as the completeness weight")
+            else:
+                raise ValueError(f"Alias {alias} not found in catalog columns.")
+        elif alias is None and scheme is not None:
+            if scheme == "boss":
+                dr['WEIGHT'] = dr['WEIGHT_SYSTOT'] * (dr['WEIGHT_NOZ'] + dr['WEIGHT_CP'] - 1.0) if catalog_type == "data" else 1.0
+                if rank == 0:
+                    logging.info(f"Using BOSS-like completeness weight for {catalog_type}")
+            elif scheme == "eboss":
+                dr['WEIGHT'] = dr['WEIGHT_SYSTOT'] * dr['WEIGHT_NOZ'] * dr['WEIGHT_CP'] if catalog_type == "data" else 1.0
+                if rank == 0:
+                    logging.info(f"Using eBOSS-like completeness weight for {catalog_type}")
+            elif scheme == "desi":
+                raise ValueError("DESI completeness weight scheme not yet implemented.")
+        else:
+            raise ValueError("Cannot specify both a scheme and an alias for completeness weight.")
 
-    return dr['WEIGHT']
+    return dr
 
 
-def catalog_reader(catalog, geometry, column_names, z_range, comp_weight_plan, para_cosmo, comm):
+
+def catalog_reader(catalog, geometry, column_names, z_range, comp_weight_plan, \
+                   para_cosmo, comm, boxcenter=None, catalog_type=None, normalization_scheme="particle"):
     """
     Reads the data/randoms catalog and applies necessary preprocessing steps.
+    Args:
+        catalog (str or list): Path(s) to the catalog file(s).
+        geometry (str): The geometry type ("box-like" or "survey-like").
+        column_names (list): List of column names for position and weight which only works in some cases.
+        z_range (tuple): The redshift range to filter the data and randoms.
+        comp_weight_plan (dict): A dictionary containing the completeness weight plan.
+        para_cosmo (dict): A dictionary containing cosmological parameters.
+        comm (MPI.Comm): The MPI communicator.
+        boxcenter (array-like, optional): The center of the box for box-like geometry.
+        catalog_type (str, optional): Type of catalog ("data" or "randoms") for survey-like geometry.
     Returns:
         DataFrame: The processed catalog.
     """
@@ -182,8 +213,11 @@ def catalog_reader(catalog, geometry, column_names, z_range, comp_weight_plan, p
     rank = comm.Get_rank()
     size = comm.Get_size()
 
+    if rank == 0:
+        logging.info(f"{'*' * 60}\nStart to read catalog: {catalog}\n{'*' * 60}")
+
     supported_types = {"npy", "fits"}  # Supported file types for catalogs
-    data_path = catalog  # could be a single file or a list of files
+    data_path = catalog # could be a single file or a list of files
 
     # Determine the file extension
     if isinstance(data_path, list):
@@ -254,7 +288,6 @@ def catalog_reader(catalog, geometry, column_names, z_range, comp_weight_plan, p
         """
 
         if data_ext == "npy":
-
             assert column_names is not None and len(column_names) >= 5, \
                 "For survey-like geometry with .npy file, column_names must be provided \
                     with at least 5 elements for x, y, z, w_fkp, w_comp."
@@ -287,51 +320,150 @@ def catalog_reader(catalog, geometry, column_names, z_range, comp_weight_plan, p
             gc.collect()
 
         elif data_ext == "fits":
-            full_data_cat = FITSCatalog(data_path) 
-
-            # Create a new catalog with only the necessary columns
-            data_cat = ArrayCatalog({"RA": full_data_cat["RA"],
-                                    "DEC": full_data_cat["DEC"],
-                                    "Z": full_data_cat["Z"],
-                                    "WEIGHT": full_data_cat["WEIGHT"],
-                                    "WEIGHT_FKP": full_data_cat["WEIGHT_FKP"]})
-            if "NZ" in full_data_cat.columns:
-                data_cat["NZ"] = full_data_cat["NZ"]
-            elif "NX" in full_data_cat.columns:
-                # for DESI-like catalog
-                data_cat["NZ"] = full_data_cat["NX"]
+            if boxcenter is None:
+                return_boxcenter = True
             else:
-                data_cat["NZ"] = 1.0
-                if rank == 0:
-                    logging.info("NZ column does not exist in the catalog. Setting NZ to 1.0")
+                return_boxcenter = False
 
+            assert "Z" in column_names, \
+                "For survey-like geometry with .fits file, column_names must include 'Z' for redshift slice."
+
+            data_arr = fits_reader(comm, catalog, column_names)
+
+            # slice the data_arr based on z_range
+            if z_range is not None:
+                z_min, z_max = z_range
+                data_arr = data_arr[(data_arr["Z"] > z_min) & (data_arr["Z"] < z_max)]
+            
+            # logging the number of objects after slicing from all ranks
+            sub_num_objects = len(data_arr)
+            total_num_objects = comm.allreduce(sub_num_objects, op=MPI.SUM)
+            if rank == 0:
+                logging.info(f"Total objects after applying z_range cut: {total_num_objects}")
+
+            # add completeness weight
+            data_arr = add_completeness_weight(data_arr, comp_weight_plan, catalog_type, comm)
+
+
+
+            posi = ra_dec_z_to_xyz(data_arr, para_cosmo, comm)
+
+            # Create a structured ndarray directly using the keys from data_arr
+            data_cat = np.zeros(len(data_arr), dtype=[('Position', 'f8', (3,)), 
+                                                     ('WEIGHT', 'f8'), 
+                                                     ('WEIGHT_FKP', 'f8'), 
+                                                     ('NZ', 'f8')])
+            
+            # convert (RA, DEC, Z) to (x, y, z)
+            data_cat['Position'] = posi
+            data_cat['WEIGHT'] = data_arr['WEIGHT']
+            if 'WEIGHT_FKP' in data_arr.dtype.names:
+                data_cat['WEIGHT_FKP'] = data_arr['WEIGHT_FKP']
+            else:
+                raise ValueError("WEIGHT_FKP column is missing in the catalog.")
+            
+            # NZ is necessary for particle normalization
+            # for desi like catalog, NZ could be NX
+            if 'NZ' in data_arr.dtype.names:
+                data_cat['NZ'] = data_arr['NZ']
+            elif 'NX' in data_arr.dtype.names:
+                data_cat['NZ'] = data_arr['NX']
+                if rank == 0:
+                    logging.info("Using NX column as NZ for DESI-like catalog.")
+            else:
+                if normalization_scheme == "particle":
+                    raise ValueError("NZ column is missing in the catalog, which is required for particle normalization.")
+                else:
+                    data_cat['NZ'] = 1.0
+                    if rank == 0:
+                        logging.info("NZ column does not exist in the catalog, Setting NZ to 1.0")
+
+            # find the boxcenter in all ranks if not provided
+            if boxcenter is None:
+                local_min = np.min(data_cat['Position'], axis=0)
+                local_max = np.max(data_cat['Position'], axis=0)
+                global_min = np.empty(3)
+                global_max = np.empty(3)
+                comm.Allreduce(local_min, global_min, op=MPI.MIN)
+                comm.Allreduce(local_max, global_max, op=MPI.MAX)
+                boxcenter = 0.5 * (global_min + global_max)
+                if rank == 0:
+                    logging.info(f"Calculated boxcenter: {boxcenter}")
+            else:
+                if rank == 0:
+                    logging.info(f"Using provided boxcenter: {boxcenter}")
+            
             # free memory
-            del full_data_cat
+            del data_arr, posi
             gc.collect()
 
-            # cut the catalog based on z_range
-            ZMIN, ZMAX = z_range
-            data_cat = data_cat[(data_cat['Z'] > ZMIN) & (data_cat['Z'] < ZMAX)]
+            if not return_boxcenter:
+                return data_cat
+            else:
+                return data_cat, boxcenter
 
-            # Fiducial cosmology setup
-            cosmo = cosmology.Cosmology(
-                h=para_cosmo["h"],
-                Omega0_b=para_cosmo["Omega0_b"],
-                Omega0_cdm=para_cosmo["Omega0_cdm"]
-            ).match(para_cosmo["sigma8"])
-            #  cosmo = cosmology.Cosmology(h=0.676).match(Omega0_m=0.31)
-
-            if rank == 0:
-                logging.info(f"Using fiducial cosmology: {cosmo}")
-
-            # Convert (RA, DEC, Z) to (x, y, z) 
-            data_cat['Position'] = \
-                transform.SkyToCartesian(data_cat['RA'], data_cat['DEC'], data_cat['Z'], cosmo=cosmo)
-            
-            # Add completeness weights according to the specified scheme
-            data_cat['WEIGHT'] = add_completeness_weight(data_cat, comp_weight_plan, "data", comm)
-
-        return data_cat          
 
 
             
+            
+
+
+
+
+def ra_dec_z_to_xyz(data_arr, para_cosmo=None, comm=None):
+    """
+    Convert (RA, DEC, Z) to (x_1, x_2, x_3) using the specified cosmology.
+    Parameters
+    ----------
+    coords_array : numpy.ndarray
+        Input array with columns 'RA', 'DEC', 'Z'.
+    para_cosmo : dict, optional
+        Cosmological parameters to modify the fiducial cosmology. If None, use default Planck18.
+    z_range : tuple, optional
+        Redshift range (z_min, z_max) to filter the data. If None, no filtering is applied.
+    comm : MPI.Comm, optional
+        MPI communicator for logging.  
+    Returns
+    -------
+    numpy.ndarray
+        Array of shape (N, 3) with columns (x_1, x_2, x_3).
+    """ 
+    rank = comm.Get_rank()
+
+    # Set up the fiducial cosmology.
+    # Check if para_cosmo provides at least 'h' and 'Omega0' for customizing Planck18; otherwise use default Planck18.
+    if para_cosmo is not None and "h" in para_cosmo and "Omega0" in para_cosmo:
+        my_cosmo = Planck18.clone(
+            H0= 100 * para_cosmo["h"] * u.km / u.s / u.Mpc,  
+            Om0=para_cosmo["Omega0"],                  
+            Ob0=para_cosmo["Omega_b"] if "Omega_b" in para_cosmo else None
+        )
+        if rank == 0:
+            logging.info(f"Using modified Planck18 cosmology: {my_cosmo}")
+    else:
+        my_cosmo = Planck18
+        if rank == 0:
+            logging.info(f"Using default Planck18 cosmology: {my_cosmo}")
+
+
+    # Convert (RA, DEC, Z) to (x, y, z)
+    ra = np.deg2rad(data_arr["RA"])  
+    dec = np.deg2rad(data_arr["DEC"])  
+    z = data_arr["Z"]  
+
+    comoving_dist = my_cosmo.comoving_distance(z).value * para_cosmo["h"] # in Mpc/h
+
+    # to avoid mix the variable names between redshift and z-axis, use x_1, x_2, x_3 for final coordinates
+    x_1 = comoving_dist * np.cos(dec) * np.cos(ra)
+    x_2 = comoving_dist * np.cos(dec) * np.sin(ra)
+    x_3 = comoving_dist * np.sin(dec)
+
+    to_return = np.column_stack([x_1, x_2, x_3])
+
+    # memory cleanup
+    del data_arr, ra, dec, z, comoving_dist, x_1, x_2, x_3
+    gc.collect()
+
+    return to_return
+
+
