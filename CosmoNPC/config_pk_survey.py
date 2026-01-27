@@ -5,7 +5,7 @@ CONFIG = {
     "statistic": "pk",  # ["pk", "bk_sco", "bk_sugi"]: Type of statistics to compute
 
     # Correlation
-    "correlation_mode": "cross",  # ["auto", "cross"]: Auto or cross correlation
+    "correlation_mode": "auto",  # ["auto", "cross"]: Auto or cross correlation
 
     # Geometry
     "geometry": "survey-like",  # "survey-like" or "box-like"
@@ -45,11 +45,11 @@ CONFIG = {
     # k_bins: k-space bins
     "k_bins": 30,
     # poles: Multipole orders
-    "poles": [0, 2, 4],
+    "poles": [0,2,4],
     # compensation: Mesh compensation
     "compensation": True,
-    # normalization_scheme: Pk normalization, particle or mixed-mesh
-    "normalization_scheme": "mixed-mesh",
+    # normalization_scheme: Pk normalization
+    "normalization_scheme": "particle",  # "particle" or "mixed-mesh"
     # "fast_estimation_mode": "closed", # "off", "replace", "coexist", default "closed"
     # "fast_estimation_mode": "closed",
 

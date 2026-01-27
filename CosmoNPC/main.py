@@ -25,8 +25,9 @@ def run_task(statistic,correlation_mode, geometry,catalogs,**kwargs):
     if rank == 0:
         logging.info(f"Nyquist frequency: {nyquist_freq}")
 
+    time_start = time.time()
+
     if statistic == "pk":
-        time_start = time.time()
         # check if the kmax is larger than the Nyquist frequency
         if k_max >= nyquist_freq:
             raise ValueError(f"k_max {k_max} is larger than the Nyquist frequency {nyquist_freq}. \
@@ -95,6 +96,12 @@ def run_task(statistic,correlation_mode, geometry,catalogs,**kwargs):
         # Save the power spectrum results
         if rank == 0:
             pk_res.update(stat_attrs)
+            # delete unnecessary keys and values in pk_res
+            if geometry == "box-like":
+                keys_to_remove = ['cosmology', 'z_range', "scheme"]
+                for key in keys_to_remove:
+                    if key in pk_res:
+                        del pk_res[key]
             logging.info(f"Power spectrum result: {pk_res}")
             # save the result to a file
             output_dir = kwargs.get('output_dir')
@@ -118,6 +125,13 @@ def run_task(statistic,correlation_mode, geometry,catalogs,**kwargs):
 
 
     if statistic == "bk_sugi":
+        tracer_type = kwargs['tracer_type']
+        angu_config = kwargs['angu_config']
+
+        # make sure the tracer_type and correlation_mode are compatible
+        validate_tracer(tracer_type, correlation_mode)
+
+
         # check if the 2 * kmax is larger than the Nyquist frequency
         if 2 * k_max >= nyquist_freq:
             raise ValueError(f"2 * k_max = {2 * k_max} is larger than the Nyquist frequency {nyquist_freq}. \
@@ -128,15 +142,17 @@ def run_task(statistic,correlation_mode, geometry,catalogs,**kwargs):
                 logging.info("Using box geometry...")
             angu_config = kwargs['angu_config']
             validate_sugi_poles(angu_config, geometry)
-            stat_attrs, rfield_a, rfield_b = get_mesh_box(catalogs,
+            stat_attrs, rfield_a, rfield_b, rfield_c = get_mesh_box(catalogs,
                         correlation_mode,
+                        statistic=statistic,
                         nmesh=kwargs['nmesh'],
                         geometry=geometry, 
                         boxsize=kwargs['boxsize'], 
                         sampler=kwargs['sampler'], 
                         interlaced=kwargs['interlaced'],
                         column_names=kwargs['column_names'],
-                        comm=comm)
+                        comm=comm,
+                        tracer_type=tracer_type,)
         else:
             raise NotImplementedError("Survey-like geometry for bk_sugi is not implemented yet.")
             
@@ -144,9 +160,13 @@ def run_task(statistic,correlation_mode, geometry,catalogs,**kwargs):
         stat_attrs.update(kwargs)
         stat_attrs['nyquist_freq'] = nyquist_freq
 
-
         # make sure all ranks have finished before performing FFTs
         comm.Barrier()
+        time_start_rfield = time.time()
+        if rank == 0:
+            logging.info(f"Time to create overdensity field(s): {time_start_rfield - time_start:.2f} seconds")
+            logging.info(f"{'$' * 60} Start to compute bispectrum using Sugiyama estimator. {'$' * 60}")
+
         time_rfield = time.time()
         if rank == 0:
             logging.info(f"Time to create (FKP) overdensity field(s): {time_rfield - time_start:.2f} seconds")
@@ -154,10 +174,40 @@ def run_task(statistic,correlation_mode, geometry,catalogs,**kwargs):
         # Compute bispectrum using Sugiyama estimator
 
         if geometry == "box-like":
-            bk_res = calculate_bk_sugi_box(rfield_a, rfield_b, correlation_mode,
+            bk_res = calculate_bk_sugi_box(rfield_a, rfield_b, rfield_c, correlation_mode,
                                            stat_attrs, comm = comm, **kwargs)
         else:
             raise NotImplementedError("Survey-like geometry for bk_sugi is not implemented yet.")
+            
+
+        # Save the bispectrum results
+        if rank == 0:
+            bk_res.update(stat_attrs)
+            # delete unnecessary keys and values in bk_res
+            if geometry == "box-like":
+                keys_to_remove = ['cosmology', 'z_range', 'comp_weight_plan', "scheme"]
+                for key in keys_to_remove:
+                    if key in bk_res:
+                        del bk_res[key]
+
+
+            logging.info(f"Bispectrum result: {bk_res}")
+            # save the result to a file
+            output_dir = kwargs.get('output_dir')
+            catalog_name_a = os.path.splitext(os.path.basename(catalogs['data_a']))[0]
+            
+            if not os.path.exists(output_dir):
+                os.makedirs(output_dir)
+            output_path = os.path.join(output_dir, f"bk_sugi_res_{angu_config}_{correlation_mode}_{tracer_type}_{catalog_name_a}.npy")
+
+            np.save(output_path, bk_res)
+            logging.info(f"Bispectrum result saved to {output_path}")
+
+        time_bk = time.time()
+        if rank == 0:
+            logging.info(f"Time to compute bispectrum: {time_bk - time_rfield:.2f} seconds")
+            logging.info(f"Total time for bk_sugi task: {time_bk - time_start:.2f} seconds")
+            
 
 
 
@@ -168,80 +218,5 @@ def run_task(statistic,correlation_mode, geometry,catalogs,**kwargs):
 
 
 
-
-    # if task_name == "bk_sco":
-    #     time_start = time.time()
-
-    #     # check if the kmax is larger than the Nyquist frequency
-    #     if 'k_max' in kwargs:
-    #         k_max = kwargs['k_max']
-    #         nmesh = kwargs['nmesh']
-    #         boxsize = kwargs['boxsize']
-    #         nyquist_freq = np.pi * nmesh[0] / boxsize[0]
-    #         if rank == 0:
-    #             logging.info(f"Nyquist frequency: {nyquist_freq}")
-    #         if k_max >= nyquist_freq:
-    #             raise ValueError(f"k_max {k_max} is larger than the Nyquist frequency {nyquist_freq}. \
-    #                              Please choose a smaller k_max.")
-        
-    #     if geometry == "survey-like":
-    #         if rank == 0:
-    #             logging.info("Using survey-like geometry...")
-    #         rfield,stat_attrs = get_mesh_bk_sco_survey(catalogs, nmesh=kwargs['nmesh'], 
-    #                     geometry=geometry,
-    #                     column_names=kwargs['column_names'],
-    #                     boxsize=kwargs['boxsize'], 
-    #                     sampler=kwargs['sampler'], 
-    #                     interlaced=kwargs['interlaced'],
-    #                     z_range=kwargs['z_range'],
-    #                     comp_weight_plan = kwargs['comp_weight_plan'],
-    #                     para_cosmo=para_cosmo,  comm=comm)
-    #     else:
-    #         if rank == 0:
-    #             logging.info("Using box geometry...")
-    #         poles = kwargs['poles']
-    #         if all(p % 2 == 1 for p in poles):
-    #             raise ValueError(f"All poles in {poles} are odd. Please choose at least one even pole, \
-    #                              since odd poles are defaultly set to 0 for periodic boxes.")
-    #         rfield,stat_attrs = get_mesh_box(catalogs, nmesh=kwargs['nmesh'],
-    #                     geometry=geometry, 
-    #                     boxsize=kwargs['boxsize'], 
-    #                     sampler=kwargs['sampler'], 
-    #                     interlaced=kwargs['interlaced'],
-    #                     column_names=kwargs['column_names'],
-    #                     comm=comm)
-        
-    #     # add more information e.g. poles, kmin, kmax, nk, etc.
-    #     stat_attrs.update(kwargs)
-
-    #     # make sure all ranks have finished before performing FFTs
-    #     comm.Barrier()
-    #     time_rfield = time.time()
-    #     if rank == 0:
-    #         logging.info(f"Time to create FKP overdensity field: {time_rfield - time_start:.2f} seconds")
-        
-    #     # compute bispectrum in the form of Scoccimarro estimator
-    #     if geometry == "survey-like":
-    #         bk_res = calculate_bk_sco_survey(rfield, stat_attrs, comm = comm, **kwargs)
-    #     else:
-    #         bk_res = calculate_bk_sco_box(rfield, stat_attrs, comm = comm, **kwargs)
-    #         pk_res = calculate_power_spectrum_box(rfield, stat_attrs, comm = comm, **kwargs)
-    #         if rank == 0:
-    #             bk_res.update(pk_res)
-    #     # Save the bispectrum results
-    #     if rank == 0:
-    #         bk_res.update(stat_attrs)
-    #         logging.info(f"Bispectrum result: {bk_res}")
-    #         # save the result to a file
-    #         output_dir = kwargs.get('output_dir')
-    #         catalog_name = os.path.splitext(os.path.basename(catalogs['data_path']))[0]
-    #         if not os.path.exists(output_dir):
-    #             os.makedirs(output_dir)
-    #         output_path = os.path.join(output_dir, f"bk_sco_res_{catalog_name}.npy")
-    #         np.save(output_path, bk_res)
-    #         logging.info(f"Bispectrum result saved to {output_path}")
-
-        
-    # return None
 
 

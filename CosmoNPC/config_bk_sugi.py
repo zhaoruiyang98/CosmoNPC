@@ -5,7 +5,7 @@ CONFIG = {
     "statistic": "bk_sugi",  # ["pk", "bk_sco", "bk_sugi"]: Type of statistics to compute
 
     # Correlation
-    "correlation_mode": "cross",  # ["auto" or "cross"]: Auto or cross correlation 
+    "correlation_mode": "auto",  # ["auto" or "cross"]: Auto or cross correlation 
 
     # Tracer type
     "tracer_type": "aaa",  # ["aaa","aab","abb","abc"] 
@@ -40,7 +40,7 @@ CONFIG = {
     # sampler: Mesh sampling: "tsc", "cic", "pcs"
     "sampler": "tsc",
     # interlaced: Interlaced mesh sampling, for now this operation won't actually be performed only if I test its reliability
-    "interlaced": True,
+    "interlaced": False,
 
     # Para_task
     # k_min: Min k (h/Mpc)

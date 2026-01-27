@@ -46,6 +46,9 @@ def get_mesh_box(catalogs, correlation_mode, nmesh, geometry, boxsize,
         N_gal_c = comm.reduce(sub_N_gal_c, op=MPI.SUM, root=0)
         weight_sum_c = comm.reduce(sub_weight_sum_c, op=MPI.SUM, root=0)
         NZ_c = weight_sum_c / np.prod(boxsize) if rank == 0 else None
+        if rank == 0:
+            logging.info(f"Total number of galaxies for tracer_c: {N_gal_c}, mean number density NZ_c: {NZ_c}")
+
 
     # Mesh attributes
     mesh_attrs = {}
@@ -63,13 +66,20 @@ def get_mesh_box(catalogs, correlation_mode, nmesh, geometry, boxsize,
 
     # Mesh generation
     rfield_a = pm_painter(data_a['Position'], data_a['WEIGHT'], Nmesh, boxsize, sampler, interlaced, comm)
+    if rank == 0:
+        logging.info(f"Mesh for tracer_a generated.")
     if correlation_mode == "cross":
         rfield_b = pm_painter(data_b['Position'], data_b['WEIGHT'], Nmesh, boxsize, sampler, interlaced, comm)
+        if rank == 0:
+            logging.info(f"Mesh for tracer_b generated.")
     else:
         rfield_b = None
 
+
     if tracer_type == "abc":
         rfield_c = pm_painter(data_c['Position'], data_c['WEIGHT'], Nmesh, boxsize, sampler, interlaced, comm)
+        if rank == 0:
+            logging.info(f"Mesh for tracer_c generated.")
     else:
         rfield_c = None
     
@@ -134,8 +144,9 @@ def pm_painter(Position, WEIGHT, Nmesh, boxsize, sampler,interlaced,comm, boxcen
     return rfield
 
  
-def get_mesh_pk_survey(catalogs, correlation_mode, nmesh, geometry, column_names, boxsize, sampler, \
-                interlaced,z_range, comp_weight_plan, para_cosmo, comm, normalization_scheme,alpha_scheme = "nbodykit"):
+def get_mesh_pk_survey(catalogs, correlation_mode, nmesh, geometry, column_names, \
+                       boxsize, sampler, interlaced,z_range, comp_weight_plan, para_cosmo, \
+                        comm, normalization_scheme,alpha_scheme = "pypower"):
     
     """
         Generate meshes for power spectrum measurement from survey-like catalog in both single and multiple tracer cases.
@@ -225,6 +236,7 @@ def get_mesh_pk_survey(catalogs, correlation_mode, nmesh, geometry, column_names
 
     # FKP overdensity field
     rfield_a = rfield_data_a - alpha_a * rfield_randoms_a
+
 
 
     if correlation_mode == "auto":
