@@ -192,7 +192,9 @@ def add_completeness_weight(dr, comp_weight_plan, catalog_type, comm):
 
 
 def catalog_reader(catalog, geometry, column_names, z_range, comp_weight_plan, \
-                   para_cosmo, comm, boxcenter=None, catalog_type=None, normalization_scheme="particle"):
+                    comm, para_cosmo=None, boxcenter=None, catalog_type=None, \
+                    normalization_scheme="particle", apply_rsd = False, boxsize=None, \
+                    redshift_box=None, los=None):
     """
     Reads the data/randoms catalog and applies necessary preprocessing steps.
     Args:
@@ -205,6 +207,10 @@ def catalog_reader(catalog, geometry, column_names, z_range, comp_weight_plan, \
         comm (MPI.Comm): The MPI communicator.
         boxcenter (array-like, optional): The center of the box for box-like geometry.
         catalog_type (str, optional): Type of catalog ("data" or "randoms") for survey-like geometry.
+        apply_rsd (bool, optional): Whether to apply redshift-space distortions.
+        boxsize (array-like, optional): The size of the box for box-like geometry.
+        redshift_box (float, optional): The redshift value for the catalog.
+        los (array-like, optional): The line-of-sight direction for redshift-space distortions.
     Returns:
         DataFrame: The processed catalog.
     """
@@ -259,12 +265,33 @@ def catalog_reader(catalog, geometry, column_names, z_range, comp_weight_plan, \
 
 
         elif data_ext == "fits":
-            raise NotImplementedError("Box-like geometry with .fits file is not yet implemented.")
+            # raise NotImplementedError("Box-like geometry with .fits file is not yet implemented.")
             data_arr = fits_reader(comm, catalog, column_names)
 
             # Create a structured ndarray directly using the keys from data_arr
             data_cat = np.zeros(len(data_arr), dtype=[('Position', 'f8', (3,)), ('WEIGHT', 'f8')])
-            data_cat['Position'] = np.column_stack([data_arr['x'], data_arr['y'], data_arr['z']])
+
+            # Check for position columns
+            for axes in [('X', 'Y', 'Z'), ('x', 'y', 'z')]:
+                if all(axis in data_arr.dtype.names for axis in axes):
+                    data_cat['Position'] = np.column_stack([data_arr[axis] for axis in axes])
+                    if rank == 0:
+                        logging.info(f"Using {axes} as the position columns")
+                    break
+            # Check if velocity columns exist for RSD
+            if apply_rsd:
+                for vel_axes in [('VX', 'VY', 'VZ'), ('vx', 'vy', 'vz')]:
+                    if all(axis in data_arr.dtype.names for axis in vel_axes):
+                        velocities = np.column_stack([data_arr[axis] for axis in vel_axes])
+                        if rank == 0:
+                            logging.info(f"Using {vel_axes} as the velocity columns for RSD")
+                        break
+                data_cat['Position'] = add_rsd(comm, data_cat['Position'], velocities, \
+                                              para_cosmo['h'], para_cosmo['Omega0'], \
+                                                LOS=los, geometry='box-like', \
+                                                box_length=boxsize[0], redshift_box=redshift_box)
+                if rank == 0:
+                    logging.info("Applied RSD to positions.")
 
             # Assign the weight column
             if 'w' in data_arr.dtype.names:
@@ -289,36 +316,36 @@ def catalog_reader(catalog, geometry, column_names, z_range, comp_weight_plan, \
 
         if data_ext == "npy":
             raise NotImplementedError("Survey-like geometry with .npy file is not yet implemented.")
-            assert column_names is not None and len(column_names) >= 5, \
-                "For survey-like geometry with .npy file, column_names must be provided \
-                    with at least 5 elements for x, y, z, w_fkp, w_comp."
+            # assert column_names is not None and len(column_names) >= 5, \
+            #     "For survey-like geometry with .npy file, column_names must be provided \
+            #         with at least 5 elements for x, y, z, w_fkp, w_comp."
             
-            # Read .npy file and process it
-            data_arr = npy_reader(data_path, comm)
+            # # Read .npy file and process it
+            # data_arr = npy_reader(data_path, comm)
 
-            #Create ArrayCatalogs
-            position_indices = [column_names.index(axis) for axis in ['x', 'y', 'z']]
-            data_cat = ArrayCatalog({"Position": np.column_stack([data_arr[:, idx] for idx in position_indices])})
+            # #Create ArrayCatalogs
+            # position_indices = [column_names.index(axis) for axis in ['x', 'y', 'z']]
+            # data_cat = ArrayCatalog({"Position": np.column_stack([data_arr[:, idx] for idx in position_indices])})
 
-            # Check for weight and nz columns
-            if 'w_comp' in column_names and 'w_fkp' in column_names :
-                data_cat['WEIGHT'] = data_arr[:, column_names.index('w_comp')]
-                data_cat['WEIGHT_FKP'] = data_arr[:, column_names.index('w_fkp')]
-                if rank == 0:
-                    logging.info(f"Using {column_names[column_names.index('w_comp')]} as the WEIGHT column, \
-                                 {column_names[column_names.index('w_fkp')]} as the WEIGHT_FKP column.")
-            if 'nz' in column_names:
-                data_cat['NZ'] = data_arr[:, column_names.index('nz')]
-                if rank == 0:
-                    logging.info(f"Using {column_names[column_names.index('nz')]} as the NZ column.")
-            else:
-                data_cat['NZ'] = 1.0
-                if rank == 0:
-                    logging.info("NZ column does not exist in the list. Setting NZ to 1.0")
+            # # Check for weight and nz columns
+            # if 'w_comp' in column_names and 'w_fkp' in column_names :
+            #     data_cat['WEIGHT'] = data_arr[:, column_names.index('w_comp')]
+            #     data_cat['WEIGHT_FKP'] = data_arr[:, column_names.index('w_fkp')]
+            #     if rank == 0:
+            #         logging.info(f"Using {column_names[column_names.index('w_comp')]} as the WEIGHT column, \
+            #                      {column_names[column_names.index('w_fkp')]} as the WEIGHT_FKP column.")
+            # if 'nz' in column_names:
+            #     data_cat['NZ'] = data_arr[:, column_names.index('nz')]
+            #     if rank == 0:
+            #         logging.info(f"Using {column_names[column_names.index('nz')]} as the NZ column.")
+            # else:
+            #     data_cat['NZ'] = 1.0
+            #     if rank == 0:
+            #         logging.info("NZ column does not exist in the list. Setting NZ to 1.0")
 
-            # Free memory
-            del data_arr
-            gc.collect()
+            # # Free memory
+            # del data_arr
+            # gc.collect()
 
         elif data_ext == "fits":
             if boxcenter is None:
@@ -457,5 +484,41 @@ def ra_dec_z_to_xyz(data_arr, para_cosmo=None, comm=None):
     gc.collect()
 
     return to_return
+
+
+def add_rsd(comm, posi_arr, vel_arr, h, om0, redshift_box=None,LOS=None, geometry='box-like', box_length=None):
+    rank = comm.Get_rank()
+    # compute rsd factor
+    my_cosmo = Planck18.clone(H0=h*100*u.km/u.s/u.Mpc, Om0=om0)
+    Hz = my_cosmo.H(redshift_box).to(u.km/u.s/u.Mpc).value
+    rsd_factor = (1 + redshift_box) / Hz
+    if rank ==0:
+        logging.info(f"Applying RSD with factor: {rsd_factor}")
+
+    # for box-like geometry, simply shift the positions along the provided LOS 
+    if geometry == 'box-like':
+        los = np.array(LOS)
+        if np.linalg.norm(los) != 1:
+            raise ValueError("LOS must be a 3d unit vector")
+        if rank ==0:
+            logging.info(f"Using box-like geometry for RSD with LOS = {los}")
+    if geometry == 'survey-like':
+        posi_norm = np.linalg.norm(posi_arr, axis=1)
+        los = posi_arr / posi_norm
+        if rank ==0:
+            logging.info("Using survey-like geometry for RSD")
+
+    # apply RSD shift
+    posi_arr += rsd_factor * los * vel_arr 
+
+    # apply periodic boundary conditions
+    if geometry == 'box-like':
+        if box_length is None:
+            raise ValueError("For box-like geometry, box_length must be provided")
+        posi_arr = posi_arr % box_length
+        if rank == 0:
+            logging.info("Boundary conditions applied for box-like catalogue")
+            
+    return posi_arr
 
 

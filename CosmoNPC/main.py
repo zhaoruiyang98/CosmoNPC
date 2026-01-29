@@ -72,6 +72,10 @@ def run_task(statistic,correlation_mode, geometry,catalogs,**kwargs):
                         column_names=kwargs['column_names'],
                         comm=comm,
                         statistic = statistic,
+                        apply_rsd = kwargs['apply_rsd'],
+                        para_cosmo=kwargs['cosmology'],
+                        redshift_box=kwargs['redshift_box'],
+                        los=kwargs['rsd'],
                         )
         
         # add more information
@@ -98,7 +102,7 @@ def run_task(statistic,correlation_mode, geometry,catalogs,**kwargs):
             pk_res.update(stat_attrs)
             # delete unnecessary keys and values in pk_res
             if geometry == "box-like":
-                keys_to_remove = ['cosmology', 'z_range', "scheme"]
+                keys_to_remove = ['z_range', "scheme"]
                 for key in keys_to_remove:
                     if key in pk_res:
                         del pk_res[key]
@@ -152,7 +156,12 @@ def run_task(statistic,correlation_mode, geometry,catalogs,**kwargs):
                         interlaced=kwargs['interlaced'],
                         column_names=kwargs['column_names'],
                         comm=comm,
-                        tracer_type=tracer_type,)
+                        tracer_type=tracer_type,
+                        apply_rsd = kwargs['apply_rsd'],
+                        para_cosmo=kwargs['cosmology'],
+                        redshift_box=kwargs['redshift_box'],
+                        los=kwargs['rsd'],
+                        )
         else:
             raise NotImplementedError("Survey-like geometry for bk_sugi is not implemented yet.")
             
@@ -185,7 +194,7 @@ def run_task(statistic,correlation_mode, geometry,catalogs,**kwargs):
             bk_res.update(stat_attrs)
             # delete unnecessary keys and values in bk_res
             if geometry == "box-like":
-                keys_to_remove = ['cosmology', 'z_range', 'comp_weight_plan', "scheme"]
+                keys_to_remove = ['z_range', 'comp_weight_plan', "scheme"]
                 for key in keys_to_remove:
                     if key in bk_res:
                         del bk_res[key]

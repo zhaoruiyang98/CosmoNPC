@@ -856,7 +856,6 @@ def radial_binning(kfield, k_bins, k_edge, knorm):
 
 
 
-
 """
 Taken from nbodykit.algorithms.convpower.catalogmesh
 see Jing et al 2005 <https://arxiv.org/abs/astro-ph/0409240> for details

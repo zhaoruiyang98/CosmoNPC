@@ -12,7 +12,9 @@ import gc
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 def get_mesh_box(catalogs, correlation_mode, nmesh, geometry, boxsize, 
-                 sampler, interlaced, column_names, comm, statistic, tracer_type = "ab"):
+                 sampler, interlaced, column_names, comm, statistic, \
+                tracer_type = "ab", apply_rsd = False,\
+                      para_cosmo = None, redshift_box = None, los = None):
     """
     Generate mesh fields and compute number densities for multi-galaxy catalogs in periodic boxes.
     """
@@ -24,7 +26,9 @@ def get_mesh_box(catalogs, correlation_mode, nmesh, geometry, boxsize,
 
     # Load data catalogs
     # tracer a
-    data_a = catalog_reader(catalogs["data_a"], geometry, column_names, None, None, None, comm)
+    data_a = catalog_reader(catalogs["data_a"], geometry, column_names, None, None, \
+                            comm, para_cosmo=para_cosmo, apply_rsd=apply_rsd, \
+                                redshift_box=redshift_box, boxsize=boxsize, los=los)
     sub_N_gal_a = data_a['WEIGHT'].shape[0]
     sub_weight_sum_a = np.sum(data_a['WEIGHT'])
     N_gal_a = comm.reduce(sub_N_gal_a, op=MPI.SUM, root=0)
@@ -32,7 +36,9 @@ def get_mesh_box(catalogs, correlation_mode, nmesh, geometry, boxsize,
     NZ_a = weight_sum_a / np.prod(boxsize) if rank == 0 else None
 
     if correlation_mode == "cross":
-        data_b = catalog_reader(catalogs["data_b"], geometry, column_names, None, None, None, comm)
+        data_b = catalog_reader(catalogs["data_b"], geometry, column_names, None, None, \
+                                comm, para_cosmo=para_cosmo, apply_rsd=apply_rsd, \
+                                    redshift_box=redshift_box, boxsize=boxsize, los=los)
         sub_N_gal_b = data_b['WEIGHT'].shape[0]
         sub_weight_sum_b = np.sum(data_b['WEIGHT'])
         N_gal_b = comm.reduce(sub_N_gal_b, op=MPI.SUM, root=0)
@@ -40,11 +46,13 @@ def get_mesh_box(catalogs, correlation_mode, nmesh, geometry, boxsize,
         NZ_b = weight_sum_b / np.prod(boxsize) if rank == 0 else None
 
     if tracer_type == "abc":
-        data_c = catalog_reader(catalogs["data_c"], geometry, column_names, None, None, None, comm)
+        data_c = catalog_reader(catalogs["data_c"], geometry, column_names, None, None, \
+                                comm, para_cosmo=para_cosmo, apply_rsd=apply_rsd, \
+                                    redshift_box=redshift_box, boxsize=boxsize, los=los)
         sub_N_gal_c = data_c['WEIGHT'].shape[0]
         sub_weight_sum_c = np.sum(data_c['WEIGHT'])
         N_gal_c = comm.reduce(sub_N_gal_c, op=MPI.SUM, root=0)
-        weight_sum_c = comm.reduce(sub_weight_sum_c, op=MPI.SUM, root=0)
+        weight_sum_c = comm.reduce(sub_weight_sum_c, op=MPI.SUM, root=0) 
         NZ_c = weight_sum_c / np.prod(boxsize) if rank == 0 else None
         if rank == 0:
             logging.info(f"Total number of galaxies for tracer_c: {N_gal_c}, mean number density NZ_c: {NZ_c}")
@@ -168,13 +176,13 @@ def get_mesh_pk_survey(catalogs, correlation_mode, nmesh, geometry, column_names
     # Load data and random catalogs
     # firstly we use randoms_a to determine the boxcenter
     randoms_a, boxcenter = catalog_reader(catalogs["randoms_a"], geometry, column_names, z_range, \
-                               comp_weight_plan, para_cosmo, comm,catalog_type="randoms",\
+                               comp_weight_plan, comm, para_cosmo=para_cosmo, boxsize=boxsize, catalog_type="randoms",\
                                 normalization_scheme=normalization_scheme)
     
     mesh_attrs.update({'boxcenter': boxcenter})
 
     data_a = catalog_reader(catalogs["data_a"], geometry, column_names, z_range, \
-                           comp_weight_plan, para_cosmo, comm,boxcenter=boxcenter, catalog_type="data",\
+                           comp_weight_plan, comm, para_cosmo=para_cosmo, boxsize=boxsize, boxcenter=boxcenter, catalog_type="data",\
                             normalization_scheme=normalization_scheme)
 
     # obtain some necessary sums for alpha, particle-normalization and shot noise calculation
@@ -245,10 +253,10 @@ def get_mesh_pk_survey(catalogs, correlation_mode, nmesh, geometry, column_names
     else:
         # Load data and random catalogs for tracer_b
         data_b = catalog_reader(catalogs["data_b"], geometry, column_names, z_range, \
-                               comp_weight_plan, para_cosmo, comm, boxcenter=boxcenter, catalog_type="data",\
+                               comp_weight_plan, comm, para_cosmo=para_cosmo, boxsize=boxsize, boxcenter=boxcenter, catalog_type="data",\
                                 normalization_scheme=normalization_scheme)
         randoms_b = catalog_reader(catalogs["randoms_b"], geometry, column_names, z_range, \
-                                   comp_weight_plan, para_cosmo, comm, boxcenter=boxcenter, catalog_type="randoms",\
+                                   comp_weight_plan, comm, para_cosmo=para_cosmo, boxsize=boxsize, boxcenter=boxcenter, catalog_type="randoms",\
                                     normalization_scheme=normalization_scheme)
         
         # obtain some necessary sums for alpha, particle-normalization and shot noise calculation

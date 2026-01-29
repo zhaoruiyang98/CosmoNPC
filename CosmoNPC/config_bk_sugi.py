@@ -15,7 +15,7 @@ CONFIG = {
 
     # Catalogs, maximum 3 tracers for cross-correlation
     "catalogs": {
-        "data_a": "/Users/xieyunchen/Downloads/cut_fits/molino.z0.0.fiducial.nbody1.hod0.npy",
+        "data_a": "/Users/xieyunchen/Downloads/abacus_HF_LRG_0p950_DR2_v1.0_AbacusSummit_base_c000_ph000_clustering.dat.fits",
         "randoms_a": None,
         "data_b": None,
         "randoms_b": None,
@@ -24,19 +24,22 @@ CONFIG = {
     },
 
     # Column names
-    "column_names": ["x", "y", "z"],  # For box-like catalog; "w" is optional
+    # "column_names": ["x", "y", "z"],  # For box-like catalog; "w" is optional
     # Warning: for box-like catalog, the order of columns here must match that in the .npy files
+    "column_names": ["X", "Y", "Z", "VX", "VY", "VZ"],  # For box-like catalog with RSD; velocity columns optional
+
 
     # "column_names": ["x", "y", "z", "w_comp", "w_fkp", "nz"], # For survey-like catalog
 
     # RSD, only for box-like catalog
-    # "rsd": [0, 0, 1],  # Unit 3-vector for redshift space distortion (RSD), box-like only
+    "rsd": [0, 0, 1],  # Unit 3-vector for redshift space distortion (RSD), box-like only
+    "apply_rsd": True,  # Whether to apply RSD, box-like only
 
     # Mesh
     # nmesh: Grid points (nx, ny, nz)
     "nmesh": [256, 256, 256],
     # boxsize: Grid size (Mpc/h)
-    "boxsize": [1000., 1000., 1000.],
+    "boxsize": [2000., 2000., 2000.],
     # sampler: Mesh sampling: "tsc", "cic", "pcs"
     "sampler": "tsc",
     # interlaced: Interlaced mesh sampling, for now this operation won't actually be performed only if I test its reliability
@@ -50,7 +53,7 @@ CONFIG = {
     # k_bins: k-space bins
     "k_bins": 10,
     # poles: Multipole orders
-    "angu_config": [0, 0, 0], # for bk_sugi, this parameter indicates one single angular momenta configuration l_1,l_2,L
+    "angu_config": [2, 2, 0], # for bk_sugi, this parameter indicates one single angular momenta configuration l_1,l_2,L
     # compensation: Mesh compensation
     "compensation": True,
 
@@ -60,13 +63,14 @@ CONFIG = {
 
     # Para_cosmo (for .npy/box-like catalogs, cosmology parameters not used)
     "cosmology": {
-        "h": 0.6777,           # Hubble parameter
-        "Omega0": 0.31377,     # Matter density
-        "Omega_b": 0.048     # Baryon density
+        "h": 0.6766,           # Hubble parameter
+        "Omega0": 0.30966 ,     # Matter density
+        # "Omega_b": 0.048     # Baryon density
     },
 
     # Redshift range, only for survey-like catalog
     "z_range": [0.15, 0.43],
+    "redshift_box": 0.95,  # redshift for RSD calculation in box-like catalog
 
     # Comp_weight_plan, only for survey-like catalog
     # scheme: "boss", "eboss" or "desi"
