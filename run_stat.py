@@ -3,14 +3,10 @@ import yaml
 import numpy as np
 from mpi4py import MPI
 from CosmoNPC import run_task
-from CosmoNPC.config_bk_sugi import CONFIG
+# from CosmoNPC.config_bk_sugi import CONFIG
 # from CosmoNPC.config_bk_sugi_cross import CONFIG
-# from CosmoNPC.config_pk import CONFIG
+from CosmoNPC.config_pk import CONFIG
 # from CosmoNPC.config_pk_survey import CONFIG
-
-
-
-
 
 # Initialize MPI
 comm = MPI.COMM_WORLD

@@ -4,6 +4,7 @@ from mpi4py import MPI
 import logging
 # from astropy import cosmology
 from astropy.cosmology import Planck18
+from astropy.cosmology import FlatLambdaCDM
 import astropy.units as u
 import warnings
 import gc
@@ -453,11 +454,12 @@ def ra_dec_z_to_xyz(data_arr, para_cosmo=None, comm=None):
     # Set up the fiducial cosmology.
     # Check if para_cosmo provides at least 'h' and 'Omega0' for customizing Planck18; otherwise use default Planck18.
     if para_cosmo is not None and "h" in para_cosmo and "Omega0" in para_cosmo:
-        my_cosmo = Planck18.clone(
-            H0= 100 * para_cosmo["h"] * u.km / u.s / u.Mpc,  
-            Om0=para_cosmo["Omega0"],                  
-            Ob0=para_cosmo["Omega_b"] if "Omega_b" in para_cosmo else None
-        )
+        # my_cosmo = Planck18.clone(
+        #     H0= 100 * para_cosmo["h"] * u.km / u.s / u.Mpc,  
+        #     Om0=para_cosmo["Omega0"],                  
+        #     Ob0=para_cosmo["Omega_b"] if "Omega_b" in para_cosmo else None
+        # )
+        my_cosmo = FlatLambdaCDM(H0=100 * para_cosmo["h"] * u.km / u.s / u.Mpc, Om0=para_cosmo["Omega0"])
         if rank == 0:
             logging.info(f"Using modified Planck18 cosmology: {my_cosmo}")
     else:
@@ -488,8 +490,10 @@ def ra_dec_z_to_xyz(data_arr, para_cosmo=None, comm=None):
 
 def add_rsd(comm, posi_arr, vel_arr, h, om0, redshift_box=None,LOS=None, geometry='box-like', box_length=None):
     rank = comm.Get_rank()
+
     # compute rsd factor
-    my_cosmo = Planck18.clone(H0=h*100*u.km/u.s/u.Mpc, Om0=om0)
+    # my_cosmo  = Planck18.clone(H0=h*100*u.km/u.s/u.Mpc, Om0=om0)
+    my_cosmo = FlatLambdaCDM(H0=h*100*u.km/u.s/u.Mpc, Om0=om0)
     Hz = my_cosmo.H(redshift_box).to(u.km/u.s/u.Mpc).value
     rsd_factor = (1 + redshift_box) / Hz
     if rank ==0:

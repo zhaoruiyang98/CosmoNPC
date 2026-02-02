@@ -1,7 +1,6 @@
 import numpy as np
 from mpi4py import MPI
 import logging
-from sympy import legendre_poly
 from sympy.physics.wigner import wigner_3j
 from .math_funcs import *
 import gc
@@ -467,7 +466,7 @@ def calculate_bk_sugi_box(rfield_a, rfield_b, rfield_c, correlation_mode, \
     rank = comm.Get_rank()
     # Extract mesh attributes
     data_vector_mode = stat_attrs["data_vector_mode"]
-    angu_config = stat_attrs['angu_config']
+    [ell_1, ell_2, L] = stat_attrs['angu_config']
     boxsize = np.array(stat_attrs['boxsize'])
     nmesh = np.array(stat_attrs['nmesh'])
     k_min, k_max, k_bins = stat_attrs['k_min'], stat_attrs['k_max'], stat_attrs['k_bins']
@@ -475,6 +474,20 @@ def calculate_bk_sugi_box(rfield_a, rfield_b, rfield_c, correlation_mode, \
     interlaced = stat_attrs['interlaced']
     tracer_type = stat_attrs['tracer_type']  # "aaa", "aab", "abb" or "abc"
     vol_per_cell = boxsize.prod() / nmesh.prod()
+
+    # constants related to angular momenta
+
+    if (ell_1, ell_2, L) == (1,1,2):
+        raise NotImplementedError("The (1,1,2) configuration is not implemented yet.")
+
+
+    M = 0 # magnetic quantum number for L, only M=0 is considered here
+    N_ells = (2 * ell_1 + 1) * (2 * ell_2 + 1) * (2 * L + 1)
+    H_ells = np.float64(wigner_3j(ell_1, ell_2, L, 0, 0, 0))
+    # find all sub-configurations that satisfy the triangular condition
+    magnetic_configs, three_j_values = get_magnetic_configs_box(ell_1, ell_2, L)
+    if rank == 0:
+        logging.info(f"Rank {rank}: Magnetic configurations found: {magnetic_configs}")
 
     # Extract number density and galaxy count based on correlation mode
     if correlation_mode == "cross":
@@ -516,11 +529,13 @@ def calculate_bk_sugi_box(rfield_a, rfield_b, rfield_c, correlation_mode, \
         cfield_b.apply(out=Ellipsis, func=compensation[0][1], kind=compensation[0][2])
         if rank == 0:
             logging.info(f"Rank {rank}: {compensation[0][1].__name__} applied to the density field b")
-        if tracer_type == "abc":
-            cfield_c = rfield_c.r2c()
-            cfield_c.apply(out=Ellipsis, func=compensation[0][1], kind=compensation[0][2])
-            if rank == 0:
-                logging.info(f"Rank {rank}: {compensation[0][1].__name__} applied to the density field c")
+
+    if correlation_mode == "cross" and tracer_type == "abc":
+        cfield_c = rfield_c.r2c()
+        cfield_c.apply(out=Ellipsis, func=compensation[0][1], kind=compensation[0][2])
+        if rank == 0:
+            logging.info(f"Rank {rank}: {compensation[0][1].__name__} applied to the density field c")
+
 
     # Get the kgrid, knorm for binning and spherical harmonics
     kgrid, knorm = get_kgrid(cfield_a)
@@ -545,43 +560,54 @@ def calculate_bk_sugi_box(rfield_a, rfield_b, rfield_c, correlation_mode, \
         raise NotImplementedError("Full data vector mode is not implemented yet.")
     elif data_vector_mode == "diagonal":
         total_res = np.zeros(k_bins).astype("complex128")
-        for m in range(0, angu_config[0] + 1):
+
+        for ss in range(len(magnetic_configs)):
+            (m1, m2, M) = magnetic_configs[ss]
             if rank == 0:
-                logging.info(f"Rank {rank}: Processing m = {m}...")
+                logging.info(f"Rank {rank}: {"="*20}Processing magnetic configuration m1 = {m1}, m2 = {m2}, M = {M}...{"="*20}")
             sub_res = np.zeros(k_bins).astype("complex128")
-            ylm = get_Ylm(angu_config[0], m, Racah_normalized=True)
+            ylm_1 = get_Ylm(ell_1, m1, Racah_normalized=True)
+            ylm_2 = get_Ylm(ell_2, m2, Racah_normalized=True)
             if rank == 0:
-                logging.info(f"Rank {rank}: Processing spherical harmonic Y_{angu_config[0]}^{m} as {ylm.expr}")                
-            ylm_weighted_cfield_a = cfield_a * ylm(kgrid[0], kgrid[1], kgrid[2])
-            if correlation_mode == "cross" and tracer_type != "aab":
-                ylm_weighted_cfield_b = cfield_b * ylm(kgrid[0], kgrid[1], kgrid[2])
+                logging.info(f"Rank {rank}: Processing spherical harmonics Y_{ell_1}^{m1} as {ylm_1.expr} and Y_{ell_2}^{m2} as {ylm_2.expr}")
+            ylm_weighted_cfield_1 = cfield_a * ylm_1(kgrid[0], kgrid[1], kgrid[2])
+            if tracer_type in ["aaa", "aab"]:
+                if ell_1 != ell_2 or m1 != m2:
+                    ylm_weighted_cfield_2 = cfield_a * ylm_2(kgrid[0], kgrid[1], kgrid[2])
             else:
-                ylm_weighted_cfield_b = None
-                if rank == 0:
-                    logging.info(f"Rank {rank}: Using the same weighted cfield for b as for a.")
-                
+                ylm_weighted_cfield_2 = cfield_b * ylm_2(kgrid[0], kgrid[1], kgrid[2])
+
             # binning in k-space then ifft it to real space
             if rank == 0:
                 logging.info(f"Rank {rank}: Closing triangles in k-space by binning and iffting the weighted cfield...")
             for i in range(k_bins):
                 mask = np.logical_and(knorm >= k_edge[i], knorm < k_edge[i + 1])
-                binned_field_a = (ylm_weighted_cfield_a * mask).c2r()
-                if ylm_weighted_cfield_b is not None:
-                    binned_field_b = (ylm_weighted_cfield_b * mask).c2r()
+                binned_field_1 = (ylm_weighted_cfield_1 * mask).c2r()
+                if tracer_type in ["aaa", "aab"]:
+                    if ell_1 == ell_2:
+                        if m1 == 0:
+                            binned_field_2 = binned_field_1
+                            if rank == 0 and i == 0:
+                                logging.info(f"Rank {rank}: Using the same weighted cfield for b as for a.")
+                        else:
+                            binned_field_2 = np.conj(binned_field_1)
+                            if rank == 0 and i == 0:
+                                logging.info(f"Rank {rank}: Using the conjugate of weighted cfield a for b.")
+                    else:
+                        binned_field_2 = (ylm_weighted_cfield_2 * mask).c2r()
                 else:
-                    binned_field_b = binned_field_a
-                sub_sig_sum = (-1)**(angu_config[0]) * np.sum(G_00 * binned_field_a * np.conj(binned_field_b))
+                    binned_field_2 = (ylm_weighted_cfield_2 * mask).c2r()
+                sub_sig_sum = (-1)**(m1 + ell_1) * np.sum(G_00 * binned_field_1 * binned_field_2)
                 # gather the results from all ranks
                 total_sig_sum = comm.reduce(sub_sig_sum, op=MPI.SUM, root=0)
                 if rank == 0:
-                    sub_res[i] = total_sig_sum
+                    sub_res[i] = three_j_values[ss] * total_sig_sum
 
             if rank == 0:
-                if m == 0:
+                if magnetic_configs[ss] == (0, 0, 0):
                     total_res += sub_res
                 else:
-                    total_res += 2 * np.real(sub_res) 
-
+                    total_res += 2 * np.real(sub_res)
 
     # Get k_eff and k_num in one particular k_bin
     k_center = 0.5 * (k_edge[1:] + k_edge[:-1])
@@ -606,7 +632,7 @@ def calculate_bk_sugi_box(rfield_a, rfield_b, rfield_c, correlation_mode, \
             logging.info("Tracer type 'abc' detected, shot-noise terms are all set to zero.")
     else:
         # SN0
-        if correlation_mode == "auto" and angu_config == [0, 0, 0]:
+        if correlation_mode == "auto" and [ell_1, ell_2, L] == [0, 0, 0]:
             SN0 = N_gal_a  # normalization factor I is N_gal_a^3/boxsize^2, we will divide it later
         else:
             SN0 = 0.0
@@ -624,6 +650,12 @@ def calculate_bk_sugi_box(rfield_a, rfield_b, rfield_c, correlation_mode, \
             if rank == 0:
                 logging.info(f"Rank {rank}: Shot-noise compensation applied for field a.")
             P_field[:] -= S_field[:]
+        
+        if L != 0: # multiply by y_L0
+            y_L0 = get_Ylm(L, 0, Racah_normalized=True)
+            P_field *= y_L0(kgrid[0], kgrid[1], kgrid[2])
+            if rank == 0:
+                logging.info(f"Rank {rank}: Multiplying by spherical harmonic Y_{L}^{0} as {y_L0.expr} for SN1 and SN2 calculation.")
 
         # Perform radial binning
         sub_sum = radial_binning(P_field, k3_bins, k3_edge, knorm)
@@ -631,12 +663,15 @@ def calculate_bk_sugi_box(rfield_a, rfield_b, rfield_c, correlation_mode, \
 
         if rank == 0:
             SN1, SN2 = 0.0, 0.0
-            if angu_config[0] == 0 and angu_config[1] == 0:
+            if ell_1 == L and ell_2 == 0:
                 if correlation_mode == "auto":
                     SN1 = (total_sum / k_num)[:len(k_center)]
-                    SN2 = SN1.copy()
+                    SN1 *= 2 * L + 1
+                    if ell_1 == 0:
+                        SN2 = SN1.copy()
                 elif correlation_mode == "cross" and tracer_type == "abb":
                     SN1 = (total_sum / k_num)[:len(k_center)]
+                    SN1 *= 2 * L + 1
 
             # SN3
             if tracer_type == "abb":
@@ -646,10 +681,30 @@ def calculate_bk_sugi_box(rfield_a, rfield_b, rfield_c, correlation_mode, \
                 if rank == 0:
                     weighted_k_num = k_num / k3_center
                     for i in range(k_bins):
-                        coeff_legendre = get_legendre_coefficients(angu_config[0],\
-                                            k_center[i], k_center[i], k_min, k_max, k_bins, mode="12")
-                        # print(coeff_legendre)
-                        SN3[i] = np.sum(coeff_legendre * total_sum / k3_center) / np.sum(weighted_k_num[:2 * i+1])
+                        coeff_assoc_legendre = np.zeros(k3_bins).astype('f8')
+                        for xx in range(len(magnetic_configs)):
+                            (m1, m2, M) = magnetic_configs[xx]
+                            three_j = three_j_values[xx]
+
+                            al_13 = get_associated_legendre_coefficients(ell_1, m1, \
+                                                k_center[i], k_center[i], k_min, k_max, k_bins, mode='13')
+
+                            al_23 = get_associated_legendre_coefficients(ell_2, m2, \
+                                                k_center[i], k_center[i], k_min, k_max, k_bins, mode='23')
+                            sub_coeff = (-1)**(m1) * three_j * al_13 * al_23
+
+
+                            if (m1, m2, M) != (0, 0, 0):
+                                al_13 = get_associated_legendre_coefficients(ell_1, -m1, \
+                                                k_center[i], k_center[i], k_min, k_max, k_bins, mode='13')
+                                al_23 = get_associated_legendre_coefficients(ell_2, -m2, \
+                                                k_center[i], k_center[i], k_min, k_max, k_bins, mode='23')
+                                sub_coeff += (-1)**(-m1) * three_j * al_13 * al_23
+                            # be careful...
+                            coeff_assoc_legendre += sub_coeff
+
+                        SN3[i] = np.sum(coeff_assoc_legendre * total_sum / k3_center) / np.sum(weighted_k_num[:2 * i+1])
+                    SN3 *= H_ells * N_ells
 
 
     # Normalize the bispectrum
@@ -669,11 +724,11 @@ def calculate_bk_sugi_box(rfield_a, rfield_b, rfield_c, correlation_mode, \
         total_shot_noise = SN0 + SN1 + SN2 + SN3
 
         # Normalize the bispectrum result
-        total_res *= (2 * angu_config[0] + 1)  / I_norm 
+        total_res *= N_ells * H_ells  / I_norm 
         total_res *= (boxsize.prod()) ** 2 / (k_num[:len(total_res)])**2
         total_res *= vol_per_cell 
 
-        total_shot_noise *= (2 * angu_config[0] + 1)  / I_norm
+        total_shot_noise *= 1 / I_norm
         # Final bispectrum result after subtracting shot-noise
         final_bk = total_res  - total_shot_noise
 
@@ -702,34 +757,6 @@ def calculate_bk_sugi_box(rfield_a, rfield_b, rfield_c, correlation_mode, \
 
     return results
 
-
-def get_legendre_coefficients(ell, k1 ,k2 ,k_min,k_max,kbin, mode = "12"):
-    """
-        if mode == "13", mu is the cosine of the angle between k1 and k3
-        if mode == "12", mu is the cosine of the angle between k1 and k2
-    """
-    k3_min, k3_max = 2 * k_min, 2 * k_max
-    k3_edge = np.linspace(k3_min, k3_max, kbin *2 + 1)[:-1]
-    k3_center = 0.5 * (k3_edge[1:] + k3_edge[:-1])
-
-    res_legendre = np.zeros(len(k3_center))
-
-    assert mode in ["12", "13"], "mode must be either '12' or '13'"
-
-    for i in range(len(k3_center)):
-        if k3_center[i] < k1 + k2:
-            if mode == "13":
-                res_legendre[i] = legendre_poly(ell, (k3_center[i]**2 + k1**2 - k2**2) \
-                                                / (2 * k1 * k3_center[i])).evalf()
-            elif mode == "12":
-                res_legendre[i] = legendre_poly(ell, (k1**2 + k2**2 - k3_center[i]**2) \
-                                                / (2 * k1 * k2)).evalf()
-
-    res_legendre *= (-1)**ell # the mu calculated here is actually -mu in the formula
-
-    return res_legendre
-
-    
 
 
 
@@ -792,7 +819,6 @@ def validate_poles(poles):
         raise ValueError("'poles' must be sorted in ascending order if it contains more than one value.")
     
 
-
 def validate_sugi_poles(angu_config, geometry):    
     """
         Validate the angu_config input for Sugiyama bispectrum estimator.
@@ -806,53 +832,15 @@ def validate_sugi_poles(angu_config, geometry):
         raise ValueError("In 'angu_config', ell1 must be greater than or equal to ell2.")
     if (ell1 + ell2 + L) % 2 != 0:
         raise ValueError("The sum of ell1, ell2, and L in 'angu_config' must be even.")
+    if  L % 2 != 0:
+        raise ValueError("L must be even.")
     # Triangle condition
     if not (ell1 - ell2 <= L <= ell1 + ell2):
         raise ValueError("The values in 'angu_config' do not satisfy the triangle condition.")
     if geometry not in ["box-like", "survey-like"]:
         raise ValueError("geometry must be either 'box-like' or 'survey-like'.")
-    if geometry == "box-like" and L != 0:
-        raise ValueError("For box geometry, L in 'angu_config' must be 0.")
 
 
-
-def get_kbin_count(k_bins, k_edge, knorm):
-    """
-    Count the number of points as well as the sum k-distance in each k-bin 
-    """
-    # Initialize the result array
-    sub_count = np.zeros(k_bins).astype("f8")
-    sub_knorm_sum = np.zeros(k_bins).astype("f8")
-
-    # Loop over the bins and sum the values in each bin
-    for i in range(k_bins):
-        mask = np.logical_and(knorm >= k_edge[i], knorm < k_edge[i+1])
-        sub_count[i] = np.sum(mask)
-        sub_knorm_sum[i] = np.sum(knorm[mask])
-
-    del mask
-    gc.collect()
-
-    return sub_count, sub_knorm_sum
-
-
-
-def radial_binning(kfield, k_bins, k_edge, knorm):
-    """
-    Radial binning of the Fourier transform of the density field
-    """
-    # Initialize the result array
-    sub_sum = np.zeros(k_bins).astype(kfield.dtype)
-
-    # Loop over the bins and sum the values in each bin
-    for i in range(k_bins):
-        mask = np.logical_and(knorm >= k_edge[i], knorm < k_edge[i+1])
-        sub_sum[i] = np.sum(kfield[mask])
-
-    del mask
-    gc.collect()
-
-    return sub_sum
 
 
 

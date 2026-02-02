@@ -5,28 +5,28 @@ CONFIG = {
     "statistic": "bk_sugi",  # ["pk", "bk_sco", "bk_sugi"]: Type of statistics to compute
 
     # Correlation
-    "correlation_mode": "auto",  # ["auto" or "cross"]: Auto or cross correlation 
+    "correlation_mode": "cross",  # ["auto" or "cross"]: Auto or cross correlation 
 
     # Tracer type
-    "tracer_type": "aaa",  # ["aaa","aab","abb","abc"] 
+    "tracer_type": "abb",  # ["aaa","aab","abb","abc"] 
 
     # Geometry
     "geometry": "box-like",  # "survey-like" or "box-like"
 
     # Catalogs, maximum 3 tracers for cross-correlation
     "catalogs": {
-        "data_a": "/Users/xieyunchen/Downloads/abacus_HF_LRG_0p950_DR2_v1.0_AbacusSummit_base_c000_ph000_clustering.dat.fits",
+        "data_a": "/Users/xieyunchen/Downloads/cut_fits/molino.z0.0.fiducial.nbody1.hod0.npy",
         "randoms_a": None,
-        "data_b": None,
+        "data_b":"/Users/xieyunchen/Downloads/cut_fits/molino.z0.0.fiducial.nbody1.hod0.npy",
         "randoms_b": None,
-        "data_c": None,
+        "data_c": "/Users/xieyunchen/Downloads/cut_fits/molino.z0.0.fiducial.nbody1.hod0.npy",
         "randoms_c": None,
     },
 
     # Column names
-    # "column_names": ["x", "y", "z"],  # For box-like catalog; "w" is optional
+    "column_names": ["x", "y", "z"],  # For box-like catalog; "w" is optional
     # Warning: for box-like catalog, the order of columns here must match that in the .npy files
-    "column_names": ["X", "Y", "Z", "VX", "VY", "VZ"],  # For box-like catalog with RSD; velocity columns optional
+    # "column_names": ["X", "Y", "Z", "VX", "VY", "VZ"],  # For box-like catalog with RSD; velocity columns optional
 
 
     # "column_names": ["x", "y", "z", "w_comp", "w_fkp", "nz"], # For survey-like catalog
@@ -38,8 +38,10 @@ CONFIG = {
     # Mesh
     # nmesh: Grid points (nx, ny, nz)
     "nmesh": [256, 256, 256],
+    # "nmesh": [512, 512, 512],
+    
     # boxsize: Grid size (Mpc/h)
-    "boxsize": [2000., 2000., 2000.],
+    "boxsize": [1000., 1000., 1000.],
     # sampler: Mesh sampling: "tsc", "cic", "pcs"
     "sampler": "tsc",
     # interlaced: Interlaced mesh sampling, for now this operation won't actually be performed only if I test its reliability
@@ -53,7 +55,7 @@ CONFIG = {
     # k_bins: k-space bins
     "k_bins": 10,
     # poles: Multipole orders
-    "angu_config": [2, 2, 0], # for bk_sugi, this parameter indicates one single angular momenta configuration l_1,l_2,L
+    "angu_config": [0, 0, 0], # for bk_sugi, this parameter indicates one single angular momenta configuration l_1,l_2,L
     # compensation: Mesh compensation
     "compensation": True,
 
@@ -61,10 +63,10 @@ CONFIG = {
     # normalization_scheme: Pk normalization, particle or mixed-mesh
     "normalization_scheme": "particle", # only work for survey-like measurement
 
-    # Para_cosmo (for .npy/box-like catalogs, cosmology parameters not used)
-    "cosmology": {
-        "h": 0.6766,           # Hubble parameter
-        "Omega0": 0.30966 ,     # Matter density
+    # Para_cosmo (for .npy/box-like catalogs, it can be used to apply RSD)
+    "cosmology": { #Planck18 parameters with TT,TE,EE+lowE+lensing
+        "h": 0.6736,           # Hubble parameter
+        "Omega0": 0.3153 ,     # Matter density
         # "Omega_b": 0.048     # Baryon density
     },
 

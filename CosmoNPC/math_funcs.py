@@ -304,5 +304,134 @@ def Compensate_bk_noise_pcs(w,v):
         tmp[wi == 0.] = 1.
         v = v * (1 - 4./3. * s + 2./5. * s**2 - 4./315. * s**3) / tmp**2
     return v
+
+def get_magnetic_configs_box(ell_1, ell_2, L):
+    """
+    Ensured by angu_config that ell_1+ell_2+L is even, wigner_3j(ell_1, ell_2, L, 0,0,0) != 0
+    """
+    from sympy.physics.wigner import wigner_3j
+    # for box configuration, M = 0
+    M = 0
+    magnetic_configs = []
+    three_j_values = []
+
+    for m1 in range(0, ell_1+1):
+        for m2 in range(-ell_2, ell_2 + 1):
+            if m1 + m2 == M:
+                magnetic_configs.append((m1, m2, M))
+                three_j_values.append(np.float64(wigner_3j(ell_1, ell_2, L, m1, m2, M).evalf()))
+
+    return magnetic_configs, three_j_values
+
+
+def get_magnetic_configs_survey(ell_1, ell_2, L):
+    from sympy.physics.wigner import wigner_3j
+    magnetic_configs = []
+    three_j_values = []
+    found_zero = False
+
+    for m1 in range(-ell_1, 1):
+        for m2 in range(-ell_2, ell_2 + 1):
+            m3 = -m1 - m2
+            if -L <= m3 <= L:
+                magnetic_configs.append((m1, m2, m3))
+                three_j_values.append(np.float64(wigner_3j(ell_1, ell_2, L, m1, m2, m3).evalf()))
+                if (m1, m2, m3) == (0, 0, 0):
+                    found_zero = True
+                    break
+        if found_zero:
+            break
+    return magnetic_configs, three_j_values
         
         
+def get_legendre_coefficients(ell, k1 ,k2 ,k_min,k_max,kbin, mode = "12"):
+    """
+        if mode == "13", mu is the cosine of the angle between k1 and k3
+        if mode == "12", mu is the cosine of the angle between k1 and k2
+    """
+    from sympy import legendre_poly
+
+    k3_min, k3_max = 2 * k_min, 2 * k_max
+    k3_edge = np.linspace(k3_min, k3_max, kbin *2 + 1)[:-1]
+    k3_center = 0.5 * (k3_edge[1:] + k3_edge[:-1])
+
+    res_legendre = np.zeros(len(k3_center))
+
+    assert mode in ["12", "13"], "mode must be either '12' or '13'"
+
+    for i in range(len(k3_center)):
+        if abs(k1 - k2) <= k3_center[i] <= (k1 + k2):
+            if mode == "13":
+                res_legendre[i] = legendre_poly(ell, (k3_center[i]**2 + k1**2 - k2**2) \
+                                                / (2 * k1 * k3_center[i])).evalf()
+            elif mode == "12":
+                res_legendre[i] = legendre_poly(ell, (k1**2 + k2**2 - k3_center[i]**2) \
+                                                / (2 * k1 * k2)).evalf()
+
+    res_legendre *= (-1)**ell # the mu calculated here is actually -mu in the formula
+
+    return res_legendre
+
+def get_associated_legendre_coefficients(ell, m , k1 ,k2 ,k_min,k_max,kbin, mode="13"):
+    """
+        Get the associated Legendre polynomial coefficients P_ell^m 
+        if mode == "13", mu is the cosine of the angle between k1 and k3
+        if mode == "23", mu is the cosine of the angle between k2 and k3
+    """
+    from sympy import assoc_legendre
+    k3_min, k3_max = 2 * k_min, 2 * k_max
+    k3_edge = np.linspace(k3_min, k3_max, kbin *2 + 1)[:-1]
+    k3_center = 0.5 * (k3_edge[1:] + k3_edge[:-1])
+
+    res_assoc_legendre = np.zeros(len(k3_center))
+    assert mode in ["23", "13"], "mode must be either '23' or '13'"
+
+    for i in range(len(k3_center)):
+        if abs(k1 - k2) <= k3_center[i] <= (k1 + k2):
+            if mode == "13":
+                mu = (k3_center[i]**2 + k1**2 - k2**2) / (2 * k1 * k3_center[i])
+            elif mode == "23":
+                mu = (k3_center[i]**2 + k2**2 - k1**2) / (2 * k2 * k3_center[i])
+            res_assoc_legendre[i] = assoc_legendre(ell, m, mu).evalf()
+
+    res_assoc_legendre *= (-1)**(ell + m) # the mu calculated here is actually -mu in the formula
+    return res_assoc_legendre
+
+
+
+def get_kbin_count(k_bins, k_edge, knorm):
+    """
+    Count the number of points as well as the sum k-distance in each k-bin 
+    """
+    # Initialize the result array
+    sub_count = np.zeros(k_bins).astype("f8")
+    sub_knorm_sum = np.zeros(k_bins).astype("f8")
+
+    # Loop over the bins and sum the values in each bin
+    for i in range(k_bins):
+        mask = np.logical_and(knorm >= k_edge[i], knorm < k_edge[i+1])
+        sub_count[i] = np.sum(mask)
+        sub_knorm_sum[i] = np.sum(knorm[mask])
+
+    del mask
+    gc.collect()
+
+    return sub_count, sub_knorm_sum
+
+
+def radial_binning(kfield, k_bins, k_edge, knorm):
+    """
+    Radial binning of the Fourier transform of the density field
+    """
+    # Initialize the result array
+    sub_sum = np.zeros(k_bins).astype(kfield.dtype)
+
+    # Loop over the bins and sum the values in each bin
+    for i in range(k_bins):
+        mask = np.logical_and(knorm >= k_edge[i], knorm < k_edge[i+1])
+        sub_sum[i] = np.sum(kfield[mask])
+
+    del mask
+    gc.collect()
+
+    return sub_sum
