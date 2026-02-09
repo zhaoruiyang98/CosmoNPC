@@ -1,4 +1,5 @@
 import numpy as np
+import h5py
 from numpy.lib import format
 from mpi4py import MPI
 import logging
@@ -10,6 +11,74 @@ import warnings
 import gc
 import fitsio
 
+
+def h5_reader(comm, files, column_names):
+    """
+    Read HDF5 files in parallel across all MPI ranks.
+    
+    Args:
+        comm: MPI communicator
+        files: List of HDF5 file paths
+        column_names: List of dataset names to read (it will not raise an error if some columns are missing, just skip them instead)
+        
+    Returns:
+        numpy.ndarray: Combined data from all files for this rank's row ranges
+    """
+    rank, size = comm.Get_rank(), comm.Get_size()
+
+    # Initialize empty array with correct dtype
+    dtype = [(col, 'f8') for col in column_names]
+    result = np.array([], dtype=dtype)
+    
+    for f in [files] if isinstance(files, str) else files:
+        # print(f"Rank {rank} processing file: {f}")
+        with h5py.File(f, 'r') as h5f:
+            # Get number of rows from the first available column (assume at least one exists)
+            # Note: This mimics fits_reader's hdu.get_nrows(), which returns total table rows.
+            # We assume all datasets have same length; use first column in column_names that exists.
+            nrows = None
+            for col in column_names:
+                if col in h5f:
+                    nrows = len(h5f[col])
+                    break
+            if nrows is None:
+                nrows = 0  # No requested columns present
+
+            if rank == 0:
+                logging.info(f"File: {f}, Total Rows: {nrows}, All Columns: {list(h5f.keys())}")
+
+            all_columns = list(h5f.keys())
+            columns_to_read = [col for col in column_names if col in all_columns]
+            columns_to_read = comm.bcast(columns_to_read, root=0)
+            if rank == 0:
+                logging.info(f"Columns to read: {columns_to_read}")
+
+            # Calculate row distribution
+            base, extra = nrows // size, nrows % size
+            start = rank * base + min(rank, extra)
+            end = start + base + (1 if rank < extra else 0)
+            
+            # Read data if this rank has rows
+            if start < nrows:
+                # Build structured array for this slice
+                local_len = end - start
+                local_data = np.empty(local_len, dtype=dtype)
+                for col in columns_to_read:
+                    local_data[col] = h5f[col][start:end]
+                
+                # Concatenate directly
+                result = np.concatenate([result, local_data]) if len(result) > 0 else local_data
+
+    # Log the number of rows read by this rank
+    local_row_count = len(result)
+    total_row_count = comm.reduce(local_row_count, op=MPI.SUM, root=0)
+    
+    if rank == 0:
+        logging.info(f"Total rows across all ranks: {total_row_count}")
+    # Log local row count on every rank (like original fits_reader implicitly does via print/debug)
+    logging.info(f"Rank {rank} read {local_row_count} rows")  # or use info if preferred
+
+    return result
 
 
 def npy_reader(data_path,comm):
@@ -222,7 +291,7 @@ def catalog_reader(catalog, geometry, column_names, z_range, comp_weight_plan, \
     if rank == 0:
         logging.info(f"{'*' * 80}\nStart to read catalog: {catalog}")
 
-    supported_types = {"npy", "fits"}  # Supported file types for catalogs
+    supported_types = {"npy", "fits","h5", "hdf5"}  # Supported file types for catalogs
     data_path = catalog # could be a single file or a list of files
 
     # Determine the file extension
@@ -265,9 +334,12 @@ def catalog_reader(catalog, geometry, column_names, z_range, comp_weight_plan, \
                     logging.info("WEIGHT column does not exist in the list. Setting WEIGHT to 1.0")
 
 
-        elif data_ext == "fits":
+        elif data_ext == "fits" or data_ext in ["h5", "hdf5"]:
             # raise NotImplementedError("Box-like geometry with .fits file is not yet implemented.")
-            data_arr = fits_reader(comm, catalog, column_names)
+            if data_ext == "fits":
+                data_arr = fits_reader(comm, catalog, column_names)
+            elif data_ext in ["h5", "hdf5"]:
+                data_arr = h5_reader(comm, catalog, column_names)
 
             # Create a structured ndarray directly using the keys from data_arr
             data_cat = np.zeros(len(data_arr), dtype=[('Position', 'f8', (3,)), ('WEIGHT', 'f8')])
