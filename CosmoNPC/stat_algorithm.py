@@ -520,7 +520,7 @@ def calculate_bk_sugi_box(rfield_a, rfield_b, rfield_c, correlation_mode, \
     # Calculate the Fourier transform of the density field and apply compensation
     cfield_a = rfield_a.r2c()
     cfield_a.apply(out=Ellipsis, func=compensation[0][1], kind=compensation[0][2])
-    logging.info(f"Rank {rank}: The shape of rfield_a is {rfield_a.shape}, the shape of cfield_a is {cfield_a.shape}.")
+    # logging.info(f"Rank {rank}: The shape of rfield_a is {rfield_a.shape}, the shape of cfield_a is {cfield_a.shape}.")
     if rank == 0:
         logging.info(f"Rank {rank}: {compensation[0][1].__name__} applied to the density field a")
 
@@ -581,6 +581,8 @@ def calculate_bk_sugi_box(rfield_a, rfield_b, rfield_c, correlation_mode, \
             if rank == 0:
                 logging.info(f"Rank {rank}: Closing triangles in k-space by binning and iffting the weighted cfield...")
             for i in range(k_bins):
+                if rank == 0:
+                    logging.info(f"Rank {rank}: Processing k-bin {i+1}/{k_bins}...")
                 mask = np.logical_and(knorm >= k_edge[i], knorm < k_edge[i + 1])
                 binned_field_1 = (ylm_weighted_cfield_1 * mask).c2r()
                 if tracer_type in ["aaa", "aab"]:
@@ -747,6 +749,7 @@ def calculate_bk_sugi_box(rfield_a, rfield_b, rfield_c, correlation_mode, \
             "Shot_noise": total_shot_noise,
             "Bk_raw": total_res,
             "k_eff": k_eff,
+            'nmodes': k_num
         })
 
 

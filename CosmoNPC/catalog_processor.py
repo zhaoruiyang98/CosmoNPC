@@ -67,7 +67,7 @@ def fits_reader(comm, files, column_names):
     result = np.array([], dtype=dtype)
     
     for f in [files] if isinstance(files, str) else files:
-        print(f"Rank {rank} processing file: {f}")
+        # print(f"Rank {rank} processing file: {f}")
         with fitsio.FITS(f) as fits:
             # Select appropriate HDU (prefer binary table)
             hdu = fits[1] if len(fits) > 1 else fits[0]
@@ -494,8 +494,8 @@ def add_rsd(comm, posi_arr, vel_arr, h, om0, redshift_box=None,LOS=None, geometr
     # compute rsd factor
     # my_cosmo  = Planck18.clone(H0=h*100*u.km/u.s/u.Mpc, Om0=om0)
     my_cosmo = FlatLambdaCDM(H0=h*100*u.km/u.s/u.Mpc, Om0=om0)
-    Hz = my_cosmo.H(redshift_box).to(u.km/u.s/u.Mpc).value
-    rsd_factor = (1 + redshift_box) / Hz
+    Ez = my_cosmo.efunc(redshift_box)
+    rsd_factor = (1 + redshift_box) / (Ez * 100)  # in (Mpc/h)/(km/s)
     if rank ==0:
         logging.info(f"Applying RSD with factor: {rsd_factor}")
 

@@ -126,11 +126,25 @@ def run_task(statistic,correlation_mode, geometry,catalogs,**kwargs):
         if rank == 0:
             logging.info(f"Time to compute power spectrum: {time_pk - time_rfield:.2f} seconds")
             logging.info(f"Total time for pk task: {time_pk - time_start:.2f} seconds")
+        comm.Barrier()
 
 
     if statistic == "bk_sugi":
         tracer_type = kwargs['tracer_type']
         angu_config = kwargs['angu_config']
+
+        if rank == 0:
+            logging.info(
+                f" With Tracer type: {tracer_type}, \
+                Angular configuration: {angu_config}, \
+                Nmesh: {nmesh}, \
+                Boxsize: {boxsize},\
+                k_min: {kwargs['k_min']}, \
+                k_max: {kwargs['k_max']}, \
+                k_bins: {kwargs['k_bins']}, \
+                angu_config: {angu_config}, \
+                "
+                )
 
         # make sure the tracer_type and correlation_mode are compatible
         validate_tracer(tracer_type, correlation_mode)
@@ -203,11 +217,16 @@ def run_task(statistic,correlation_mode, geometry,catalogs,**kwargs):
             logging.info(f"Bispectrum result: {bk_res}")
             # save the result to a file
             output_dir = kwargs.get('output_dir')
-            catalog_name_a = os.path.splitext(os.path.basename(catalogs['data_a']))[0]
-            
             if not os.path.exists(output_dir):
                 os.makedirs(output_dir)
-            output_path = os.path.join(output_dir, f"bk_sugi_res_{angu_config}_{correlation_mode}_{tracer_type}_{catalog_name_a}.npy")
+
+            catalog_name_a = os.path.splitext(os.path.basename(catalogs['data_a']))[0]
+            parent_dir = os.path.basename(os.path.dirname(catalogs['data_a']))
+            if kwargs.get('use_parent_dir', True):
+                catalog_name_a = parent_dir + '_' + catalog_name_a
+                
+            output_path = os.path.join(output_dir, \
+                                       f'bk_sugi_res_{angu_config[0]}{angu_config[1]}{angu_config[2]}_{correlation_mode}_{tracer_type}_{catalog_name_a}.npy')
 
             np.save(output_path, bk_res)
             logging.info(f"Bispectrum result saved to {output_path}")
@@ -216,6 +235,8 @@ def run_task(statistic,correlation_mode, geometry,catalogs,**kwargs):
         if rank == 0:
             logging.info(f"Time to compute bispectrum: {time_bk - time_rfield:.2f} seconds")
             logging.info(f"Total time for bk_sugi task: {time_bk - time_start:.2f} seconds")
+
+        comm.Barrier()
             
 
 
