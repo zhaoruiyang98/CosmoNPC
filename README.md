@@ -1,6 +1,6 @@
 # CosmoNPC
 
-CosmoNPC is a Python/MPI code for mesh-based measurements of large-scale structure statistics, with an emphasis on power spectrum multipoles and bispectrum multipoles in both box-like and survey-like geometries.
+CosmoNPC is a Python/MPI code for mesh-based measurements of large-scale structure statistics, **based on a suite of optimized multipole expansion algorithms**, with an emphasis on power spectrum multipoles and bispectrum multipoles in both box-like and survey-like geometries.
 
 The present implementation is aimed at:
 
@@ -205,7 +205,7 @@ Survey-like inputs typically use sky coordinates and survey weights, for example
 - `DEC`
 - `Z`
 - `WEIGHT_FKP`
-- `WEIGHT_FKP`, completeness and systematic weights
+- `WEIGHT`, completeness and systematic weights
 - `NZ`
 
 The exact interpretation depends on:
