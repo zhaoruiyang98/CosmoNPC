@@ -1,11 +1,9 @@
+import os
+import yaml
 import numpy as np
 from mpi4py import MPI
-import logging
-import time 
-
 from .mesh_generator import *
 from .stat_algorithm import *
-import os
 
 
 def run_task(statistic,correlation_mode, geometry,catalogs,**kwargs):
@@ -32,7 +30,7 @@ def run_task(statistic,correlation_mode, geometry,catalogs,**kwargs):
         if k_max >= nyquist_freq:
             raise ValueError(f"k_max {k_max} is larger than the Nyquist frequency {nyquist_freq}. \
                                 Please choose a smaller k_max.")
-        
+
         # validate poles configuration
         validate_poles(kwargs['poles'])
 
@@ -40,13 +38,13 @@ def run_task(statistic,correlation_mode, geometry,catalogs,**kwargs):
             if rank == 0:
                 logging.info("Using survey-like geometry...")
 
-            stat_attrs, rfield_a, rfield_b = get_mesh_pk_survey(catalogs, 
-                        correlation_mode, 
-                        nmesh=nmesh, 
+            stat_attrs, rfield_a, rfield_b = get_mesh_pk_survey(catalogs,
+                        correlation_mode,
+                        nmesh=nmesh,
                         geometry=geometry,
                         column_names=kwargs['column_names'],
-                        boxsize=boxsize, 
-                        sampler=kwargs['sampler'], 
+                        boxsize=boxsize,
+                        sampler=kwargs['sampler'],
                         interlaced=kwargs['interlaced'],
                         z_range=kwargs['z_range'],
                         comp_weight_plan=kwargs['comp_weight_plan'],
@@ -66,9 +64,9 @@ def run_task(statistic,correlation_mode, geometry,catalogs,**kwargs):
             stat_attrs, rfield_a, rfield_b = get_mesh_box(catalogs,
                         correlation_mode,
                         nmesh=kwargs['nmesh'],
-                        geometry=geometry, 
-                        boxsize=kwargs['boxsize'], 
-                        sampler=kwargs['sampler'], 
+                        geometry=geometry,
+                        boxsize=kwargs['boxsize'],
+                        sampler=kwargs['sampler'],
                         interlaced=kwargs['interlaced'],
                         column_names=kwargs['column_names'],
                         comm=comm,
@@ -78,7 +76,7 @@ def run_task(statistic,correlation_mode, geometry,catalogs,**kwargs):
                         redshift_box=kwargs['redshift_box'],
                         los=kwargs['rsd'],
                         )
-        
+
         # add more information
         stat_attrs.update(kwargs)
         stat_attrs['nyquist_freq'] = nyquist_freq
@@ -89,7 +87,7 @@ def run_task(statistic,correlation_mode, geometry,catalogs,**kwargs):
         if rank == 0:
             logging.info(f"Time to create (FKP) overdensity field(s): {time_get_rfield - time_start:.2f} seconds")
             logging.info(f"{'$' * 60} Start to compute power spectrum. {'$' * 60}")
-        
+
         # Compute power spectrum
         if geometry == "survey-like":
             pk_res = calculate_power_spectrum_survey(stat_attrs, rfield_a, rfield_b,correlation_mode,\
@@ -121,7 +119,7 @@ def run_task(statistic,correlation_mode, geometry,catalogs,**kwargs):
                 output_path = os.path.join(output_dir, f"pk_res_{correlation_mode}_{catalog_name_a}_{catalog_name_b}.npy")
             np.save(output_path, pk_res)
             logging.info(f"Power spectrum result saved to {output_path}")
-        
+
 
         time_pk = time.time()
         if rank == 0:
@@ -165,7 +163,7 @@ def run_task(statistic,correlation_mode, geometry,catalogs,**kwargs):
         if 2 * k_max >= nyquist_freq:
             raise ValueError(f"2 * k_max = {2 * k_max} is larger than the Nyquist frequency {nyquist_freq}. \
                              Please choose a smaller k_max.")
-        
+
         if geometry == "box-like":
             if rank == 0:
                 logging.info("Using box geometry...")
@@ -174,9 +172,9 @@ def run_task(statistic,correlation_mode, geometry,catalogs,**kwargs):
                         correlation_mode,
                         statistic=statistic,
                         nmesh=kwargs['nmesh'],
-                        geometry=geometry, 
-                        boxsize=kwargs['boxsize'], 
-                        sampler=kwargs['sampler'], 
+                        geometry=geometry,
+                        boxsize=kwargs['boxsize'],
+                        sampler=kwargs['sampler'],
                         interlaced=kwargs['interlaced'],
                         column_names=kwargs['column_names'],
                         comm=comm,
@@ -208,7 +206,7 @@ def run_task(statistic,correlation_mode, geometry,catalogs,**kwargs):
                         normalization_scheme=kwargs.get('normalization_scheme', 'particle'),
                         alpha_scheme=kwargs.get('alpha_scheme', 'pypower'),
                         )
-            
+
         # add more information
         stat_attrs.update(kwargs)
         stat_attrs['nyquist_freq'] = nyquist_freq
@@ -229,7 +227,7 @@ def run_task(statistic,correlation_mode, geometry,catalogs,**kwargs):
         else:
             bk_res = calculate_bk_sugi_survey(rfield_a, rfield_b, rfield_c, correlation_mode,
                                               stat_attrs, comm = comm, catalogs=catalogs, **kwargs)
-            
+
 
         # Save the bispectrum results
         if rank == 0:
@@ -254,7 +252,7 @@ def run_task(statistic,correlation_mode, geometry,catalogs,**kwargs):
             parent_dir = os.path.basename(os.path.dirname(catalogs['data_a']))
             if kwargs.get('use_parent_dir', True):
                 catalog_name_a = parent_dir + '_' + catalog_name_a
-                
+
             output_path = os.path.join(output_dir, \
                                        f'bk_sugi_res_{data_vector_mode}_{angu_config[0]}{angu_config[1]}{angu_config[2]}_{correlation_mode}_{tracer_type}_{catalog_name_a}.npy')
 
@@ -267,3 +265,60 @@ def run_task(statistic,correlation_mode, geometry,catalogs,**kwargs):
             logging.info(f"Total time for bk_sugi task: {time_bk - time_start:.2f} seconds")
 
         comm.Barrier()
+
+
+
+def validate_config(config):
+    assert config['sampler'] in ['ngp', 'cic', 'pcs', 'tsc'], \
+        "sampler should be 'ngp', 'cic', 'pcs', or 'tsc'"
+    Cubic_Check(config['nmesh'], "nmesh", int)
+    Cubic_Check(config['boxsize'], "boxsize", (float, int))
+
+# Function to check the catalogs based on geometry and correlation mode
+def catalog_check(catalogs, geometry, correlation_mode, statistic, tracer_type=None):
+    assert catalogs['data_a'] is not None, "data_a catalog must be provided"
+    if statistic in ['pk', 'bk_sco', 'bk_sugi']:
+        if correlation_mode == "auto":
+            if geometry == "survey-like":
+                assert catalogs['randoms_a'] is not None, \
+                    "randoms_a catalog must be provided for survey-like auto-correlation"
+        elif correlation_mode == "cross":
+            assert catalogs['data_b'] is not None, "data_b catalog must be provided for cross-correlation"
+            if geometry == "survey-like":
+                assert catalogs['randoms_a'] is not None, \
+                    "randoms_a catalog must be provided for survey-like cross-correlation"
+                assert catalogs['randoms_b'] is not None, \
+                    "randoms_b catalog must be provided for survey-like cross-correlation"
+    # Extra check for tracer_type == "abc" and statistic is bispectrum
+    if tracer_type == "abc" and statistic in ['bk_sco', 'bk_sugi']:
+        assert catalogs.get('data_c') is not None, "data_c catalog must be provided for tracer_type 'abc' in bispectrum"
+        if geometry == "survey-like":
+            assert catalogs.get('randoms_c') is not None, \
+                "randoms_c catalog must be provided for tracer_type 'abc' in survey-like bispectrum"
+
+# Function to check if a value is a cubic number
+def Cubic_Check(value, value_name, value_type):
+    assert isinstance(value, (list, tuple)) and len(value) == 3, \
+        f"{value_name} must be a list or tuple of three elements"
+    assert all(isinstance(x, value_type) and x > 0 for x in value), \
+        f"All elements in {value_name} must be positive {value_type.__name__}s"
+    assert len(set(value)) == 1, \
+        f"All elements in {value_name} must be equal"
+
+
+
+def run_stats(config):
+    comm = MPI.COMM_WORLD
+    # check the configuration and create output directory
+    validate_config(config)
+    catalog_check(config['catalogs'], config['geometry'], \
+                  config['correlation_mode'], config['statistic'])
+    if comm.rank == 0:
+        os.makedirs(config['output_dir'], exist_ok=True)
+        
+    run_task(**config)
+
+
+
+if __name__ == '__main__':
+    run_stats()
