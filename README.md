@@ -39,26 +39,26 @@ Cross statistics are part of the core code structure for both `pk` and `bk`, rat
 
 Main package modules:
 
-- `CosmoNPC/main.py`
-- `CosmoNPC/catalog_processor.py`
-- `CosmoNPC/mesh_generator.py`
-- `CosmoNPC/math_funcs.py`
-- `CosmoNPC/stat_algorithm.py`
-
-Top-level run script:
-
-- `run_stat.py`
+- `run.py`
+- `catalog_processor.py`
+- `mesh_generator.py`
+- `math_funcs.py`
+- `stat_algorithm.py`
 
 Representative configuration files:
 
-- `config_pk.py`
-- `config_pk_survey.py`
-- `config_bk_sugi.py`
-- `config_bk_sugi_survey.py`
+- `config/pk_box.py`
+- `config/pk_survey.py`
+- `config/bk_sugi_box.py`
+- `config/bk_sugi_survey.py`
+
+Example run script:
+
+- `example.py`
 
 ## Dependencies
 
-The Python dependencies currently required by the code are listed in `requirements.txt`:
+The Python dependencies currently required by the code are listed in `pyproject.toml`:
 
 - `numpy`
 - `mpi4py`
@@ -75,24 +75,27 @@ Notes:
 - `pmesh` is a core dependency of the mesh and FFT workflow.
 - MPI support must be available in the Python environment for `mpi4py`.
 
-This repository documents the required dependencies, but does not attempt to provide a universal installation recipe, since some environments, especially HPC systems, require site-specific setup.
+To install `CosmoNPC`, simply run 
+```bash
+pip install git+https://github.com/YunchenXie/CosmoNPC.git
+```
 
 ## Running the Code
 
 The workflow is config-driven.
 
-1. Select one configuration file.
-2. Update the `CONFIG` dictionary for your dataset and measurement target.
-3. Import that `CONFIG` in `run_stat.py`.
+1. Import one default python configuration dictionary from `cosmonpc.config`
+2. Deepcopy and update the `CONFIG` dictionary for your dataset and measurement target.
+3. Pass the updated `CONFIG` to `cosmonpc.run_stats` function.
 4. Run with MPI.
 
 A typical invocation is:
 
 ```bash
-mpirun -n 4 python run_stat.py
+mpirun -n 4 python example.py
 ```
 
-The active configuration is selected near the top of `run_stat.py`.
+The active configuration is selected near the top of `example.py`.
 
 ## Configuration Overview
 
