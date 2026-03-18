@@ -75,7 +75,10 @@ Notes:
 - `pmesh` is a core dependency of the mesh and FFT workflow.
 - MPI support must be available in the Python environment for `mpi4py`.
 
-To install `CosmoNPC`, simply run `pip install git+https://github.com/YunchenXie/CosmoNPC.git'
+To install `CosmoNPC`, simply run 
+```bash
+pip install git+https://github.com/YunchenXie/CosmoNPC.git
+```
 
 ## Running the Code
 
