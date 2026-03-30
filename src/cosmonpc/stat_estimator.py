@@ -300,6 +300,7 @@ def calculate_power_spectrum_survey(
             )
 
     # Get the kgrid, knorm, and x_grid for binning and spherical harmonics
+    xgrid = None
     if poles == [0]:  # For ell = 0 only, we do not need to calculate the kgrid
         knorm = np.sqrt(sum(np.real(kk) ** 2 for kk in cfield_a.x))
         kgrid = None
@@ -466,6 +467,13 @@ def calculate_power_spectrum_survey(
         if F4_cache is not None:
             del F4_cache
         gc.collect()
+
+    if xgrid is not None:
+        del xgrid
+    if kgrid is not None:
+        del kgrid
+    del knorm
+    gc.collect()
 
     if rank == 0:
         logging.info(f"Rank {rank}: Finished processing all poles")
@@ -816,12 +824,13 @@ def calculate_bk_sugi_box(
 
                 # Reuse cache_1 across all bj blocks within this bi block.
                 cache_1 = {}
-                cache_2 = {}
 
                 bj_start = bi if use_symmetry else 0
                 for bj in range(bj_start, k_bins, block_size):
                     j_end = min(k_bins, bj + block_size)
                     block_on_diag = bi == bj
+                    # cache_2 is scoped to one column block so its footprint is bounded by block_size.
+                    cache_2 = {}
                     if rank == 0:
                         logging.info(
                             f"Rank {rank}: Processing block columns {bj+1} to {j_end}..."
@@ -871,7 +880,10 @@ def calculate_bk_sugi_box(
                             if rank == 0:
                                 sub_res[i, j] = three_j_values[ss] * total_sig_sum
 
-                del cache_1, cache_2
+                    del cache_2
+                    gc.collect()
+
+                del cache_1
                 gc.collect()
 
             if rank == 0 and use_symmetry:
@@ -1377,7 +1389,6 @@ def calculate_bk_sugi_survey(
             for bi in range(0, k_bins, block_size):
                 i_end = min(k_bins, bi + block_size)
                 cache_1 = {}
-                cache_2 = {}
                 bj_start = bi if use_symmetry else 0
                 _log(
                     2, "BLOCK", f"sub_cfg={ss+1}/{total_cfg_count} row=[{bi},{i_end-1}]"
@@ -1386,6 +1397,7 @@ def calculate_bk_sugi_survey(
                 for bj in range(bj_start, k_bins, block_size):
                     j_end = min(k_bins, bj + block_size)
                     block_on_diag = bi == bj
+                    cache_2 = {}
                     _log(
                         2,
                         "BLOCK",
@@ -1435,7 +1447,10 @@ def calculate_bk_sugi_survey(
                             if rank == 0:
                                 sub_res[i, j] = three_j_values[ss] * total_sig_sum
 
-                del cache_1, cache_2
+                    del cache_2
+                    gc.collect()
+
+                del cache_1
                 gc.collect()
 
             # Fill lower triangle from upper triangle when m1 == m2 or m1 == -m2 optimization is used.

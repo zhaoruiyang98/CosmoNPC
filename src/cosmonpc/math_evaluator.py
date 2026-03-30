@@ -423,8 +423,39 @@ def get_valid_k3_bins(k1, k2, k_min, k_max, kbin):
     valid_bins = np.logical_and(k3_center >= abs(k1 - k2), k3_center <= (k1 + k2))
     return valid_bins
 
-
 def get_kbin_count(k_bins, k_edge, knorm):
+    """
+    Count the number of points as well as the sum k-distance in each k-bin
+    """
+    # Initialize the result array
+    sub_count = np.zeros(k_bins).astype("f8")
+    sub_knorm_sum = np.zeros(k_bins).astype("f8")
+
+    # Step 1: flatten knorm to 1d array
+    knorm = np.ascontiguousarray(knorm.ravel())
+
+    # Step 2: remove points outside the bin range first
+    valid = np.logical_and(knorm >= k_edge[0], knorm < k_edge[-1])
+    knorm = knorm[valid]
+
+    # Step 3: find the bin index of each remaining k value
+    # For bins [k_edge[i], k_edge[i + 1]), searchsorted(..., side="right") - 1
+    # gives the corresponding 0-based bin index.
+    bin_indices = np.searchsorted(k_edge, knorm, side="right") - 1
+
+    # Step 4: count points and sum knorm in each bin
+    sub_count = np.bincount(bin_indices, minlength=k_bins).astype("f8")
+    sub_knorm_sum = np.bincount(
+        bin_indices, weights=knorm, minlength=k_bins
+    ).astype("f8")
+
+    del bin_indices, valid
+    gc.collect()
+
+    return sub_count, sub_knorm_sum
+
+
+def get_kbin_count_old(k_bins, k_edge, knorm):
     """
     Count the number of points as well as the sum k-distance in each k-bin
     """
@@ -445,6 +476,44 @@ def get_kbin_count(k_bins, k_edge, knorm):
 
 
 def radial_binning(kfield, k_bins, k_edge, knorm):
+    """
+    Radial binning of the Fourier transform of the density field
+    """
+    # Initialize the result array
+    sub_sum = np.zeros(k_bins).astype(kfield.dtype)
+
+    # Step 1: flatten kfield and knorm to 1d arrays
+    kfield = np.ascontiguousarray(kfield.ravel())
+    knorm = np.ascontiguousarray(knorm.ravel())
+
+    # Step 2: remove points outside the bin range first
+    valid = np.logical_and(knorm >= k_edge[0], knorm < k_edge[-1])
+    knorm = knorm[valid]
+    kfield = kfield[valid]
+
+    # Step 3: find the bin index of each remaining k value
+    bin_indices = np.searchsorted(k_edge, knorm, side="right") - 1
+
+    # Step 4: sum kfield in each bin, handling complex values manually if necessary
+    if np.iscomplexobj(kfield):
+        sub_sum = np.bincount(
+            bin_indices, weights=np.real(kfield), minlength=k_bins
+        ) + 1j * np.bincount(
+            bin_indices, weights=np.imag(kfield), minlength=k_bins
+        )
+        sub_sum = sub_sum.astype(kfield.dtype, copy=False)
+    else:
+        sub_sum = np.bincount(
+            bin_indices, weights=kfield, minlength=k_bins
+        ).astype(kfield.dtype, copy=False)
+
+    del bin_indices, valid
+    gc.collect()
+
+    return sub_sum
+
+
+def radial_binning_old(kfield, k_bins, k_edge, knorm):
     """
     Radial binning of the Fourier transform of the density field
     """

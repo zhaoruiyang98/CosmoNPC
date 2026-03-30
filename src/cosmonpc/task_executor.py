@@ -1,4 +1,5 @@
 import os
+import gc
 import yaml
 import numpy as np
 from mpi4py import MPI
@@ -109,6 +110,9 @@ def run_task(statistic, correlation_mode, geometry, catalogs, **kwargs):
             pk_res = calculate_power_spectrum_box(
                 rfield_a, rfield_b, correlation_mode, stat_attrs, comm=comm, **kwargs
             )
+
+        del rfield_a, rfield_b
+        gc.collect()
 
         # Save the power spectrum results
         if rank == 0:
@@ -295,7 +299,8 @@ def run_task(statistic, correlation_mode, geometry, catalogs, **kwargs):
 
             catalog_name_a = os.path.splitext(os.path.basename(catalogs["data_a"]))[0]
             parent_dir = os.path.basename(os.path.dirname(catalogs["data_a"]))
-            if kwargs.get("use_parent_dir", True):
+            # sometimes we need parent dir to distinguish different catalogs, especially when the catalog name is the same but they are from different directories
+            if kwargs.get("use_parent_dir", True): 
                 catalog_name_a = parent_dir + "_" + catalog_name_a
 
             output_path = os.path.join(
