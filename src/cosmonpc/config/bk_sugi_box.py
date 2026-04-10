@@ -63,10 +63,11 @@ CONFIG = {
     # compensation: Mesh compensation
     "compensation": True,
     "data_vector_mode": "full",  # "diagonal" or "full"
+    "shotnoise_mode": "fft",  # "ana", "fft", or "both" for the S3 shot-noise branch
     "block_size": "full",  # 1,"full" or an integer between 1 and k_bins
     # (only for bk_sugi with data_vector_mode="full")
-    # normalization_scheme: Pk normalization, particle or mixed-mesh
-    "normalization_scheme": "particle",
+    # normalization_scheme: bk normalization, particle, mesh or mixed-mesh
+    "normalization_scheme": "mesh",  # "particle" or "mixed-mesh"
     # Para_cosmo (for .npy/box-like catalogs, it can be used to apply RSD)
     "cosmology": {  # Planck18 parameters with TT,TE,EE+lowE+lensing
         "h": 0.6736,  # Hubble parameter

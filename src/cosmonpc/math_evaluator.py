@@ -415,13 +415,39 @@ def get_associated_legendre_coefficients(ell, m, k1, k2, k_min, k_max, kbin, mod
     return res_assoc_legendre
 
 
+def get_associated_legendre_coefficients_eff(ell, m, k1, k2, k3_eff, mode="13"):
+    """
+    Effective-k version of ``get_associated_legendre_coefficients``.
+
+    Parameters
+    ----------
+    k1, k2 : float
+        Effective wavenumbers of the two external bins.
+    k3_eff : array_like
+        Effective wavenumbers of the third-leg bins.
+    """
+    from sympy import assoc_legendre
+
+    res_assoc_legendre = np.zeros(len(k3_eff))
+    assert mode in ["23", "13"], "mode must be either '23' or '13'"
+
+    for i, k3_val in enumerate(k3_eff):
+        if abs(k1 - k2) <= k3_val <= (k1 + k2):
+            if mode == "13":
+                mu = (k3_val**2 + k1**2 - k2**2) / (2 * k1 * k3_val)
+            elif mode == "23":
+                mu = (k3_val**2 + k2**2 - k1**2) / (2 * k2 * k3_val)
+            res_assoc_legendre[i] = assoc_legendre(ell, m, mu).evalf()
+
+    res_assoc_legendre *= (-1) ** (ell + m)
+    return res_assoc_legendre
+
+
 def get_valid_k3_bins(k1, k2, k_min, k_max, kbin):
     k3_min, k3_max = 2 * k_min, 2 * k_max
     k3_edge = np.linspace(k3_min, k3_max, kbin * 2 + 1)[:-1]
     k3_center = 0.5 * (k3_edge[1:] + k3_edge[:-1])
-
-    valid_bins = np.logical_and(k3_center >= abs(k1 - k2), k3_center <= (k1 + k2))
-    return valid_bins
+    return np.logical_and(k3_center >= abs(k1 - k2), k3_center <= (k1 + k2))
 
 def get_kbin_count(k_bins, k_edge, knorm):
     """
@@ -558,6 +584,33 @@ def get_q_ells(i, j, k_center, k_min, k_max, k_bins, ell_1, ell_2, L, k3_bins):
             ell_2, -xx, k_center[i], k_center[j], k_min, k_max, k_bins, mode="23"
         )
         sub_coeff = (-1) ** (xx) * three_j * al_13 * al_23
+        q_ells += sub_coeff
+
+    return q_ells
+
+
+def get_q_ells_eff(i, j, k_eff, ell_1, ell_2, L, k3_bins, k3_eff):
+    from sympy.physics.wigner import wigner_3j
+
+    r"""
+    Same as ``get_q_ells``, but use measured effective wavenumbers on all
+    three sides of the triangle.
+    """
+
+    q_ells = np.zeros(k3_bins).astype("f8")
+    ell_min = min(ell_1, ell_2)
+    k1_eff = k_eff[i]
+    k2_eff = k_eff[j]
+
+    for xx in range(-ell_min, ell_min + 1):
+        three_j = np.float64(wigner_3j(ell_1, ell_2, L, xx, -xx, 0).evalf())
+        al_13 = get_associated_legendre_coefficients_eff(
+            ell_1, xx, k1_eff, k2_eff, k3_eff, mode="13"
+        )
+        al_23 = get_associated_legendre_coefficients_eff(
+            ell_2, -xx, k1_eff, k2_eff, k3_eff, mode="23"
+        )
+        sub_coeff = (-1) ** xx * three_j * al_13 * al_23
         q_ells += sub_coeff
 
     return q_ells
@@ -922,3 +975,65 @@ def space_inversion_transposed_complex(field, return_type="ndarray"):
     out = field.pm.create(type="complex")
     out[...] = local_arr
     return out
+
+
+def get_compensation(interlaced, sampler):
+    """
+    Return the Fourier-space window compensation used by the standard
+    power-spectrum / bispectrum estimators.
+    """
+    if interlaced:
+        d = {
+            "cic": CompensateCIC,
+            "tsc": CompensateTSC,
+            "pcs": CompensatePCS,
+            "ngp": CompensateNGP,
+        }
+    else:
+        d = {
+            "cic": CompensateCICShotnoise,
+            "tsc": CompensateTSCShotnoise,
+            "pcs": CompensatePCSShotnoise,
+            "ngp": CompensateNGPShotnoise,
+        }
+
+    if sampler not in d:
+        raise ValueError("compensation for window %s is not defined" % sampler)
+
+    filter = d[sampler]
+    return [("complex", filter, "circular")]
+
+
+def get_compensation_bk_sugi(sampler):
+    """
+    Return the k-space compensation used by the Sugiyama bispectrum signal term.
+    """
+    d = {
+        "cic": CompensateCIC,
+        "tsc": CompensateTSC,
+        "pcs": CompensatePCS,
+        "ngp": CompensateNGP,
+    }
+    if sampler not in d:
+        raise ValueError("compensation for window %s is not defined" % sampler)
+
+    filter = d[sampler]
+    return [("complex", filter, "circular")]
+
+
+def get_compensation_shot_sugi(sampler):
+    """
+    Return the compensation used by the Sugiyama shot-noise correction terms.
+    """
+    d = {
+        "cic": Compensate_bk_noise_cic,
+        "tsc": Compensate_bk_noise_tsc,
+        "pcs": Compensate_bk_noise_pcs,
+        "ngp": Compensate_bk_noise_ngp,
+    }
+
+    if sampler not in d:
+        raise ValueError("compensation for window %s is not defined" % sampler)
+
+    filter = d[sampler]
+    return [("complex", filter, "circular")]

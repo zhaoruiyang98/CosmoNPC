@@ -1,6 +1,6 @@
 [project]
 name = "CosmoNPC"
-version = "0.1.0"
+version = "0.2.0"
 description = "CosmoNPC is a Python/MPI code for mesh-based measurements of large-scale structure statistics"
 readme = "README.md"
 authors = [

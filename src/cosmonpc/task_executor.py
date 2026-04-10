@@ -4,7 +4,8 @@ import yaml
 import numpy as np
 from mpi4py import MPI
 from .mesh_generator import *
-from .stat_estimator import *
+from .clustering_estimator import *
+from .param_helper import validate_config, catalog_check
 
 
 def run_task(statistic, correlation_mode, geometry, catalogs, **kwargs):
@@ -157,8 +158,11 @@ def run_task(statistic, correlation_mode, geometry, catalogs, **kwargs):
         tracer_type = kwargs["tracer_type"]
         angu_config = kwargs["angu_config"]
         data_vector_mode = kwargs.get("data_vector_mode", "diagonal")
+        shotnoise_mode = kwargs.get("shotnoise_mode", "ana")
         if data_vector_mode not in ["diagonal", "full"]:
             raise ValueError("data_vector_mode must be either 'diagonal' or 'full'")
+        if shotnoise_mode not in ["ana", "fft", "both"]:
+            raise ValueError("shotnoise_mode must be either 'ana', 'fft', or 'both'")
         if data_vector_mode == "diagonal":
             kwargs.setdefault("block_size", 1)
         else:
@@ -175,6 +179,7 @@ def run_task(statistic, correlation_mode, geometry, catalogs, **kwargs):
                 k_max: {kwargs['k_max']}, \
                 k_bins: {kwargs['k_bins']}, \
                 data_vector_mode: {data_vector_mode}, \
+                shotnoise_mode: {shotnoise_mode}, \
                 block_size: {kwargs['block_size']}, \
                 angu_config: {angu_config}, \
                 "
@@ -321,80 +326,6 @@ def run_task(statistic, correlation_mode, geometry, catalogs, **kwargs):
             )
 
         comm.Barrier()
-
-
-def validate_config(config):
-    assert config["sampler"] in [
-        "ngp",
-        "cic",
-        "pcs",
-        "tsc",
-    ], "sampler should be 'ngp', 'cic', 'pcs', or 'tsc'"
-    Cubic_Check(config["nmesh"], "nmesh", int)
-    Cubic_Check(config["boxsize"], "boxsize", (float, int))
-    validate_boolean_fields(config)
-
-
-def validate_boolean_fields(config):
-    bool_fields = [
-        "interlaced",
-        "compensation",
-        "use_fast_mode",
-        "apply_rsd",
-        "use_parent_dir",
-    ]
-
-    for field in bool_fields:
-        if field not in config:
-            continue
-        if not isinstance(config[field], (bool, np.bool_)):
-            raise TypeError(
-                f"Config field '{field}' must be a boolean (True/False), got "
-                f"{type(config[field]).__name__}: {config[field]!r}"
-            )
-
-
-# Function to check the catalogs based on geometry and correlation mode
-def catalog_check(catalogs, geometry, correlation_mode, statistic, tracer_type=None):
-    assert catalogs["data_a"] is not None, "data_a catalog must be provided"
-    if statistic in ["pk", "bk_sco", "bk_sugi"]:
-        if correlation_mode == "auto":
-            if geometry == "survey-like":
-                assert (
-                    catalogs["randoms_a"] is not None
-                ), "randoms_a catalog must be provided for survey-like auto-correlation"
-        elif correlation_mode == "cross":
-            assert (
-                catalogs["data_b"] is not None
-            ), "data_b catalog must be provided for cross-correlation"
-            if geometry == "survey-like":
-                assert (
-                    catalogs["randoms_a"] is not None
-                ), "randoms_a catalog must be provided for survey-like cross-correlation"
-                assert (
-                    catalogs["randoms_b"] is not None
-                ), "randoms_b catalog must be provided for survey-like cross-correlation"
-    # Extra check for tracer_type == "abc" and statistic is bispectrum
-    if tracer_type == "abc" and statistic in ["bk_sco", "bk_sugi"]:
-        assert (
-            catalogs.get("data_c") is not None
-        ), "data_c catalog must be provided for tracer_type 'abc' in bispectrum"
-        if geometry == "survey-like":
-            assert (
-                catalogs.get("randoms_c") is not None
-            ), "randoms_c catalog must be provided for tracer_type 'abc' in survey-like bispectrum"
-
-
-# Function to check if a value is a cubic number
-def Cubic_Check(value, value_name, value_type):
-    assert (
-        isinstance(value, (list, tuple)) and len(value) == 3
-    ), f"{value_name} must be a list or tuple of three elements"
-    assert all(
-        isinstance(x, value_type) and x > 0 for x in value
-    ), f"All elements in {value_name} must be positive {value_type.__name__}s"
-    assert len(set(value)) == 1, f"All elements in {value_name} must be equal"
-
 
 def run_stats(config):
     comm = MPI.COMM_WORLD

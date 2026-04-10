@@ -46,11 +46,11 @@ CONFIG = {
     # k_bins: k-space bins
     "k_bins": 30,
     # poles: Multipole orders
-    "poles": [0, 2, 4 ,6, 8],
+    "poles": [0, 2, 4, 6, 8 ],
     # compensation: Mesh compensation
     "compensation": True,
     # normalization_scheme: Pk normalization
-    "normalization_scheme": "mixed-mesh",  # "particle" or "mixed-mesh"
+    "normalization_scheme": "particle",  # "particle" or "mixed-mesh"
     # alpha_scheme: how to compute alpha (pypower or nbodykit)
     "alpha_scheme": "nbodykit",
     # Fast mode regarding using legendre expansion of P4 or higher orders,

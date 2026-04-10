@@ -2,236 +2,148 @@
 
 # CosmoNPC
 
-CosmoNPC(**Cosmo**logical **N**-**P**oint correlation **C**alculator) is a Python/MPI code for mesh-based measurements of large-scale structure statistics, **based on a suite of optimized multipole expansion algorithms**, with an emphasis on power spectrum multipoles and bispectrum multipoles in both box-like and survey-like geometries. 
+CosmoNPC is a Python/MPI code for mesh-based measurements of large-scale structure statistics in box-like and survey-like geometries.
 
-The present implementation is aimed at:
+Current focus:
 
-- power spectrum measurements (`pk`)
-- Sugiyama-style bispectrum multipoles (`bk_sugi`)
-- Scoccimarro-style bispectrum multipoles (`bk_sco`), to be implemented.
-- auto-correlations and cross-correlations
-- simulation boxes and survey catalogs
+- power spectrum multipoles: `pk`
+- Sugiyama bispectrum multipoles: `bk_sugi`
+- auto and cross correlations
+- box and survey catalogs
 - MPI-distributed FFT-based estimators
 
-## Measurement Scope
+## Current Scope
 
-### Power Spectrum
+- `pk`
+  - box-like
+  - survey-like
+  - auto / cross
+  - user-specified `poles`
 
-The current implementation includes:
+- `bk_sugi`
+  - box-like
+  - survey-like
+  - auto / cross
+  - `tracer_type` = `aaa`, `aab`, `abb`, `abc`
+  - `data_vector_mode` = `diagonal` or `full`
+  - `shotnoise_mode` = `ana`, `fft`, or `both`
 
-- auto power spectrum measurements
-- cross power spectrum measurements
-- box-like geometry
-- survey-like geometry
-- multipole measurements specified by `poles`
+`bk_sco` is not part of the stable workflow yet.
 
-### Bispectrum
+## Package Layout
 
-The current implementation includes:
-
-- auto bispectrum measurements
-- cross bispectrum measurements
-- box-like geometry
-- survey-like geometry
-- `tracer_type` choices including `aaa`, `aab`, `abb`, `abc`
-- diagonal and full data-vector modes for `bk_sugi`
-
-Cross statistics are part of the core code structure for both `pk` and `bk`, rather than a later extension.
-
-## Repository Structure
-
-Main package modules:
+Main modules:
 
 - `task_executor.py`
 - `catalog_processor.py`
 - `mesh_generator.py`
 - `math_evaluator.py`
-- `stat_estimator.py`
+- `clustering_estimator.py`
+- `param_helper.py`
 
-Representative configuration files:
+Representative configs:
 
-- `config/pk_box.py`
-- `config/pk_survey.py`
-- `config/bk_sugi_box.py`
-- `config/bk_sugi_survey.py`
+- `src/cosmonpc/config/pk_box.py`
+- `src/cosmonpc/config/pk_survey.py`
+- `src/cosmonpc/config/bk_sugi_box.py`
+- `src/cosmonpc/config/bk_sugi_survey.py`
 
-Example run script:
+Example:
 
 - `example.py`
 
-## Dependencies
+## Install
 
-The Python dependencies currently required by the code are listed in `pyproject.toml`:
-
-- `numpy`
-- `mpi4py`
-- `h5py`
-- `astropy`
-- `fitsio`
-- `pmesh`
-- `sympy`
-- `numexpr`
-- `scipy`
-
-Notes:
-
-- `numexpr` is required because some symbolic kernels are evaluated through `sympy.lambdify(..., 'numexpr')`.
-- `pmesh` is a core dependency of the mesh and FFT workflow.
-- MPI support must be available in the Python environment for `mpi4py`.
-
-To install `CosmoNPC`, simply run 
 ```bash
 pip install git+https://github.com/YunchenXie/CosmoNPC.git
 ```
 
-## Running the Code
+Core dependencies are listed in `pyproject.toml`. In practice you need at least:
 
-The workflow is config-driven.
+- `numpy`
+- `mpi4py`
+- `pmesh`
+- `sympy`
+- `numexpr`
+- `astropy`
+- `fitsio`
+- `h5py`
+- `scipy`
 
-1. Import one default python configuration dictionary from `cosmonpc.config`
-2. Deepcopy and update the `CONFIG` dictionary for your dataset and measurement target.
-3. Pass the updated `CONFIG` to `cosmonpc.run_stats` function.
-4. Run with MPI.
+## Minimal Usage
 
-A typical invocation is:
+The code is config-driven.
+
+```python
+from copy import deepcopy
+from cosmonpc import run_stats
+from cosmonpc.config import bk_sugi_survey
+
+config = deepcopy(bk_sugi_survey.CONFIG)
+config["output_dir"] = "./results"
+run_stats(config)
+```
+
+Run with MPI, for example:
 
 ```bash
 mpirun -n 4 python example.py
 ```
 
-The active configuration is selected near the top of `example.py`.
+## Key Configuration Fields
 
-## Configuration Overview
+- `statistic`: `pk` or `bk_sugi`
+- `geometry`: `box-like` or `survey-like`
+- `correlation_mode`: `auto` or `cross`
+- `tracer_type`: bispectrum tracer pattern such as `aaa`, `aab`, `abb`, `abc`
+- `catalogs`: input file paths
+- `column_names`: catalog column mapping
+- `nmesh`: mesh size `[nx, ny, nz]`
+- `boxsize`: box size in `Mpc/h`
+- `sampler`: `ngp`, `cic`, `tsc`, or `pcs`
+- `interlaced`: whether to use interlaced painting
+- `k_min`, `k_max`, `k_bins`: k-bin settings
+- `poles`: power-spectrum multipoles
+- `angu_config`: bispectrum angular configuration `[ell_1, ell_2, L]`
+- `data_vector_mode`: `diagonal` or `full` for `bk_sugi`
+- `shotnoise_mode`: `ana`, `fft`, or `both`
+- `normalization_scheme`: normalization mode
+- `alpha_scheme`: survey alpha convention
+- `output_dir`: output directory
 
-The code is controlled by a single `CONFIG` dictionary. Important entries include:
+## Input Formats
 
-- `statistic`
-  - `pk`
-  - `bk_sugi`
+Box-like catalogs:
 
-- `geometry`
-  - `box-like`
-  - `survey-like`
+- `.npy`, `.fits`, `.h5`, `.hdf5`
+- Cartesian positions are expected
+- optional velocity columns can be used for RSD
 
-- `correlation_mode`
-  - `auto`
-  - `cross`
+Survey-like catalogs:
 
-- `tracer_type`
-  - relevant for bispectrum
-  - examples include `aaa`, `aab`, `abb`, `abc`
-
-- `nmesh`
-  - mesh resolution `[nx, ny, nz]`
-
-- `boxsize`
-  - physical box size in units of Mpc/h
-
-- `sampler`
-  - assignment window such as `tsc`, `cic`, `ngp` or `pcs`
-
-- `compensation`
-  - whether to apply Fourier-space compensation for the assignment window
-
-- `poles`
-  - power spectrum multipoles
-
-- `angu_config` for bispectrum
-  - bispectrum angular configuration `[ell_1, ell_2, L]`
-
-- `data_vector_mode` for bispectrum
-  - `diagonal`
-  - `full`
-
-- `block_size` for full bispectrum data vectors
-  - only relevant for `bk_sugi` with `data_vector_mode="full"`
-  - controls the block partition of the full `(k1, k2)` data vector
-
-- `normalization_scheme`
-  - survey normalization mode
-
-- `alpha_scheme`
-  - survey random/data normalization convention
-
-## Interpretation of `block_size`
-
-`block_size` is a performance and memory-control parameter for `bk_sugi` when `data_vector_mode="full"`.
-
-In full bispectrum mode, the output is a two-dimensional data vector `B(k_1, k_2)`. A straightforward implementation would evaluate the whole `(k_1, k_2)` rectangle at once. This minimizes repeated work, but can become memory-intensive when `nmesh` is large.
-
-`block_size` controls how this rectangle is partitioned into smaller square blocks:
-
-- `block_size = "full"`
-  - treat the whole `(k_1, k_2)` rectangle as a single block
-  - usually minimizes repeated work
-  - usually maximizes memory usage
-
-- `block_size = 1`
-  - treat each `(k_1, k_2)` location as its own smallest block
-  - usually minimizes memory usage
-  - usually increases repeated construction of intermediate binned fields
-
-- `block_size = N`
-  - where `N` is an integer between `1` and `k_bins`
-  - split the full data vector into several  square blocks with size of `N x N`.
-  - this is the practical compromise between speed and memory
-
-Within one block, CosmoNPC can reuse precomputed binned fields instead of reconstructing them for every individual `(k_1, k_2)` pair. This is why a larger `block_size` can be faster. The trade-off is that more intermediate mesh fields remain in memory at the same time.
-
-In practical terms:
-
-- larger `block_size` means more reuse and higher memory usage
-- smaller `block_size` means less reuse and lower memory usage
-
-This parameter has no practical effect for `data_vector_mode="diagonal"`.
-
-
-
-## Input Catalogs
-
-### Box-like Catalogs
-
-Box-like inputs typically use Cartesian positions:
-
-- `x`, `y`, `z`
-
-Optional velocity columns can be supplied when redshift-space distortion is applied. In that case, columns such as `VX`, `VY`, and `VZ` are needed, depending on the catalog format.
-
-### Survey-like Catalogs
-
-Survey-like inputs typically use sky coordinates and survey weights, for example:
-
-- `RA`
-- `DEC`
-- `Z`
-- `WEIGHT_FKP`
-- `WEIGHT`, completeness and systematic weights
-- `NZ`
-
-The exact interpretation depends on:
-
-- `column_names`
-- `comp_weight_plan`
-- `geometry`
+- currently `.fits`
+- typical fields include `RA`, `DEC`, `Z`, `WEIGHT_FKP`, completeness weights, and `NZ`
 
 ## Output
 
-Results are written to the directory specified by `output_dir`.
+Results are written to `output_dir` as `.npy` dictionaries.
 
-Depending on the selected statistic, the output may include:
+Typical outputs include:
 
-- raw signal estimates
+- final measured statistic
+- raw signal term
 - shot-noise terms
-- normalized final measurements
-- metadata needed for validation and post-processing
+- normalization metadata
+- effective k values and mode counts
 
-## Technical Characteristics
+## Technical Features
 
-Some technical characteristics of the current implementation are:
+- Symmetry-aware estimator design is used aggressively to reduce redundant work. The code exploits conjugate, swap, and tracer/leg symmetry whenever possible, especially in bispectrum loops.
+- The survey and box implementations include an analytical shot-noise treatment for the Sugiyama estimator, together with an FFT-based $S_{\ell_1\ell_2L}|_{i=j\neq k}$ evaluation path for cross-checking and comparison. The original Sugiyama shot-noise prescription is no longer the supported route in this code.
+- In `bk_sugi` full mode, `block_size` accelerates the calculation by trading memory for reuse: larger blocks keep more intermediate shell/binned fields in memory, so the code can reuse them across many `(k1, k2)` pairs instead of rebuilding them repeatedly.
 
-- heavy numerical work is delegated to `pmesh`, `numpy`, and `numexpr`
-- MPI is used as the main parallelization layer
-- the bispectrum code separates signal and shot-noise logic
-- the `full` bispectrum mode supports block-based evaluation to balance speed and memory
-- symmetry relations are used to reduce repeated work in selected angular configurations
-- both auto and cross statistics are built into the code structure rather than treated as afterthoughts
+## Notes
+
+- `full` bispectrum mode supports block-based evaluation through `block_size`.
+- Survey and box pipelines do not share exactly the same normalization and shot-noise structure.
+- Small smoke tests can be run with reduced `nmesh`, smaller catalogs, and fewer bins before launching production jobs.
