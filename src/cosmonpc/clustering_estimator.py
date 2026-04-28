@@ -209,7 +209,7 @@ def calculate_power_spectrum_survey(
 
     # Extract mesh attributes
     poles = stat_attrs["poles"]
-    use_fast_mode = stat_attrs.get("use_fast_mode", False)
+    high_order_mode = stat_attrs.get("high_order_mode", "default")
     boxsize, nmesh = np.array(stat_attrs["boxsize"]), np.array(stat_attrs["nmesh"])
     boxcenter = np.array(stat_attrs["boxcenter"])
     k_min, k_max, k_bins = (
@@ -240,34 +240,95 @@ def calculate_power_spectrum_survey(
 
     comm.Barrier()
 
-    def get_activate_fast_mode(poles, use_fast_mode):
+    def get_high_order_strategy(poles, high_order_mode):
         supported_poles = ([0, 2, 4], [0, 2, 4, 6], [0, 2, 4, 6, 8])
 
-        if not use_fast_mode:
+        if high_order_mode == "default":
             if rank == 0:
-                logging.info(f"Rank {rank}: [fast mode] disabled by configuration.")
-            return False
+                logging.info(
+                    f"Rank {rank}: [high-order mode] using exact multipoles only."
+                )
+            return None
 
         if correlation_mode != "auto":
             if rank == 0:
                 logging.info(
-                    f"Rank {rank}: [fast mode] disabled because only auto-correlation is supported."
+                    f"Rank {rank}: [high-order mode] disabled because only auto-correlation is supported."
                 )
-            return False
+            return None
 
         if poles not in supported_poles:
             if rank == 0:
                 logging.info(
-                    f"Rank {rank}: [fast mode] disabled because poles {poles} are unsupported. "
+                    f"Rank {rank}: [high-order mode] disabled because poles {poles} are unsupported. "
                     f"Supported pole sets: {list(supported_poles)}."
                 )
-            return False
+            return None
 
         if rank == 0:
-            logging.info(f"Rank {rank}: [fast mode] activated for poles {poles}.")
-        return True
+            logging.info(
+                f"Rank {rank}: [high-order mode] activated as '{high_order_mode}' for poles {poles}."
+            )
 
-    Flag_activate_fast_mode = get_activate_fast_mode(poles, use_fast_mode)
+        all_high_order_poles = {pole for pole in poles if pole in (4, 6, 8)}
+        requested_fast_poles = set()
+        requested_exact_poles = set()
+        internal_exact_poles = set()
+
+        if high_order_mode == "default":
+            # Exact-only mode:
+            # [0,2,4] -> P4
+            # [0,2,4,6] -> P4, P6
+            # [0,2,4,6,8] -> P4, P6, P8
+            requested_exact_poles = all_high_order_poles
+        elif high_order_mode == "fast":
+            # Fast-output mode:
+            # [0,2,4] -> P4b
+            # [0,2,4,6] -> P4, P6b
+            # [0,2,4,6,8] -> P4, P6b, P8b
+            fast_map = {
+                (0, 2, 4): {4},
+                (0, 2, 4, 6): {6},
+                (0, 2, 4, 6, 8): {6, 8},
+            }
+            exact_map = {
+                (0, 2, 4): set(),
+                (0, 2, 4, 6): {4},
+                (0, 2, 4, 6, 8): {4},
+            }
+            requested_fast_poles = fast_map.get(tuple(poles), set())
+            requested_exact_poles = exact_map.get(tuple(poles), set())
+        elif high_order_mode == "compare":
+            # Compare mode keeps the exact outputs and also adds all available
+            # fast estimators for the requested high-order poles:
+            # [0,2,4] -> P4 + P4b
+            # [0,2,4,6] -> P4 + P6 + P4b + P6b
+            # [0,2,4,6,8] -> P4 + P6 + P8 + P4b + P6b + P8b
+            requested_fast_poles = all_high_order_poles
+            requested_exact_poles = all_high_order_poles
+
+        if high_order_mode in ("fast", "compare") and any(
+            pole in requested_fast_poles for pole in (6, 8)
+        ):
+            # P6b and P8b depend on the exact P4 value, so P4 may still be
+            # computed internally even when it is not part of the final output.
+            internal_exact_poles.add(4)
+
+        compute_fast_poles = requested_fast_poles
+        compute_exact_poles = requested_exact_poles | internal_exact_poles
+        need_f2_cache = any(pole in compute_fast_poles for pole in (4, 6, 8))
+        need_f4_cache = any(pole in compute_fast_poles for pole in (6, 8))
+
+        return {
+            "mode": high_order_mode,
+            "compute_fast_poles": compute_fast_poles,
+            "compute_exact_poles": compute_exact_poles,
+            "visible_exact_poles": requested_exact_poles,
+            "need_f2_cache": need_f2_cache,
+            "need_f4_cache": need_f4_cache,
+        }
+
+    high_order_strategy = get_high_order_strategy(poles, high_order_mode)
 
     # Calculate the Fourier transform of the density fields
     cfield_a = rfield_a.r2c()
@@ -321,32 +382,12 @@ def calculate_power_spectrum_survey(
         k_eff = total_knorm_sum / k_num
     results = {"k_eff": k_eff, "k_num": k_num, "I_norm": I_norm} if rank == 0 else None
 
-    skipped_poles_fast_mode = set()
-    if Flag_activate_fast_mode:
-        skip_map = {
-            (0, 2, 4): {4},
-            (0, 2, 4, 6): {6},
-            (0, 2, 4, 6, 8): {6, 8},
-        }
-        skipped_poles_fast_mode = skip_map.get(tuple(poles), set())
-        if rank == 0 and skipped_poles_fast_mode:
-            logging.info(
-                f"Rank {rank}: [fast mode] will skip poles {sorted(skipped_poles_fast_mode)} and complete them later."
-            )
-
     F2_cache, F4_cache = None, None
 
     # Loop over the poles
     for pole in poles:
         if rank == 0:
             logging.info(f"Rank {rank}: Processing pole {pole}")
-
-        if pole in skipped_poles_fast_mode:
-            if rank == 0:
-                logging.info(
-                    f"Rank {rank}: [fast mode] skipping P{pole}; an approximated version will be calculated later."
-                )
-            continue
 
         if pole == 0:
             if correlation_mode == "auto":
@@ -358,27 +399,58 @@ def calculate_power_spectrum_survey(
             IMPORTANT NOTE:
             Here we temporarily put the rsd effect into rfield_b
             """
+            should_store_exact = True
+            if pole in (4, 6, 8) and high_order_strategy is not None:
+                should_store_exact = pole in high_order_strategy["compute_exact_poles"]
+
+            should_cache_f2 = (
+                pole == 2
+                and high_order_strategy is not None
+                and high_order_strategy["need_f2_cache"]
+            )
+            should_cache_f4 = (
+                pole == 4
+                and high_order_strategy is not None
+                and high_order_strategy["need_f4_cache"]
+            )
+
+            if not should_store_exact and not should_cache_f2 and not should_cache_f4:
+                if rank == 0:
+                    logging.info(
+                        f"Rank {rank}: [high-order mode] skipping exact P{pole}; only fast outputs are requested."
+                    )
+                continue
+
             G_ell_b = get_G_ell(
                 rfield_b, pole, kgrid, xgrid, compensation, boxsize, comm
             )
-            P_ell_field = cfield_a[:] * np.conj(G_ell_b[:])
+
             r"""
             F_\ell(\bs{k}) =\mathcal{G}_\ell(\bs{k}) + (-1)^\ell \mathcal{G}_\ell^*(-\bs{k})
             """
-            if pole == 2 and Flag_activate_fast_mode:
+            if should_cache_f2:
                 F2_cache = G_ell_b + np.conj(
                     space_inversion_transposed_complex(G_ell_b, return_type="ndarray")
                 )
-                F2_cache *= 1 / 2 
+                F2_cache *= 1 / 2
                 if rank == 0:
-                    logging.info(f"Rank {rank}: [fast mode] cached F2.")
-            if pole == 4 and Flag_activate_fast_mode:
+                    logging.info(f"Rank {rank}: [high-order mode] cached F2.")
+            if should_cache_f4:
                 F4_cache = G_ell_b + np.conj(
                     space_inversion_transposed_complex(G_ell_b, return_type="ndarray")
                 )
-                F4_cache *= 1 / 2 
+                F4_cache *= 1 / 2
                 if rank == 0:
-                    logging.info(f"Rank {rank}: [fast mode] cached F4.")
+                    logging.info(f"Rank {rank}: [high-order mode] cached F4.")
+
+            if not should_store_exact:
+                if rank == 0:
+                    logging.info(
+                        f"Rank {rank}: [high-order mode] exact P{pole} omitted from outputs."
+                    )
+                continue
+
+            P_ell_field = cfield_a[:] * np.conj(G_ell_b[:])
 
         # Radial binning
         sub_sum = radial_binning(P_ell_field, k_bins, k_edge, knorm)
@@ -412,12 +484,11 @@ def calculate_power_spectrum_survey(
     del cfield_a, cfield_b, P_ell_field
     gc.collect()
 
-    if Flag_activate_fast_mode:
+    if high_order_strategy is not None and high_order_strategy["compute_fast_poles"]:
         if rank == 0:
-            logging.info(f"Rank {rank}: [fast mode] completing skipped poles.")
+            logging.info(f"Rank {rank}: [high-order mode] completing fast multipoles.")
 
-        # Complete P4b from the cached F2 field.
-        if poles == [0, 2, 4]:
+        if 4 in high_order_strategy["compute_fast_poles"]:
             P_22_field = F2_cache[:] * np.conj(F2_cache[:])
             sub_sum_22 = radial_binning(P_22_field, k_bins, k_edge, knorm)
             total_sum_22 = comm.reduce(sub_sum_22, op=MPI.SUM, root=0)
@@ -427,30 +498,31 @@ def calculate_power_spectrum_survey(
                 P22 *= 9 / I_norm
                 P22 -= N0 * 9 / 5
                 results["P4b"] = np.real(35 / 18 * P22 - results["P2"] - 7 / 2 * results["P0"])
-                logging.info(f"Rank {rank}: [fast mode] stored fast estimator P4b.")
+                logging.info(f"Rank {rank}: [high-order mode] stored fast estimator P4b.")
 
             del P_22_field, sub_sum_22, total_sum_22
 
-        # Complete P6b / P8b from the cached F2 and F4 fields.
-        elif poles in ([0, 2, 4, 6], [0, 2, 4, 6, 8]):
+        if 6 in high_order_strategy["compute_fast_poles"] or 8 in high_order_strategy["compute_fast_poles"]:
             P_42_field = F4_cache[:] * np.conj(F2_cache[:])
             sub_sum_42 = radial_binning(P_42_field, k_bins, k_edge, knorm)
             total_sum_42 = comm.reduce(sub_sum_42, op=MPI.SUM, root=0)
 
-            if rank == 0:
+            if rank == 0 and 6 in high_order_strategy["compute_fast_poles"]:
                 P42 = total_sum_42 / k_num
                 P42 *= 13 / I_norm
                 results["P6b"] = np.real(
                     11 / 5 * P42 - 52 / 63 * results["P4"] - 286 / 175 * results["P2"]
                 )
-                logging.info(f"Rank {rank}: [fast mode] stored fast estimator P6b.")
+                logging.info(f"Rank {rank}: [high-order mode] stored fast estimator P6b.")
 
-            if poles == [0, 2, 4, 6, 8]:
+            if 8 in high_order_strategy["compute_fast_poles"]:
                 P_44_field = F4_cache[:] * np.conj(F4_cache[:])
                 sub_sum_44 = radial_binning(P_44_field, k_bins, k_edge, knorm)
                 total_sum_44 = comm.reduce(sub_sum_44, op=MPI.SUM, root=0)
 
                 if rank == 0:
+                    P42 = total_sum_42 / k_num
+                    P42 *= 13 / I_norm
                     P44 = total_sum_44 / k_num
                     P44 *= 17 / I_norm
                     P44 -= N0 * 17 / 9
@@ -461,11 +533,15 @@ def calculate_power_spectrum_survey(
                         - 1326 / 8575 * results["P2"]
                         - 2431 / 490 * results["P0"]
                     )
-                    logging.info(f"Rank {rank}: [fast mode] stored fast estimator P8b.")
+                    logging.info(f"Rank {rank}: [high-order mode] stored fast estimator P8b.")
 
                 del P_44_field, sub_sum_44, total_sum_44
 
             del P_42_field, sub_sum_42, total_sum_42
+
+        if rank == 0 and high_order_strategy["mode"] == "fast":
+            for pole in high_order_strategy["compute_fast_poles"]:
+                results.pop(f"P{pole}", None)
 
         if F2_cache is not None:
             del F2_cache
@@ -2680,7 +2756,20 @@ def calculate_bk_sugi_survey(
 
             if rank == 0:
                 S3_local *= H_ells * N_ells
-                S3_local *= 1/ nmesh.prod()  # normalization consistent with FFT-based bispectrum estimator
+                S3_local *= 1/ nmesh.prod()  
+                r"""
+                Let L = boxsize.prod(), N = nmesh.prod(). The scalings for the FFT-based S3 term are:
+
+                1. L^2: for the shell-filtered inverse FFT, same as F_{\ell}^{m}, see FFT_Norm_in_Estimators.md
+                2. N^2 / L^2: the normalization difference between discrete inverse FFT and continuous integral, see FFT_Norm_in_Estimators.md
+                3. N^(-2): for the C2R (complex-to-real) convention
+                4. L/N: for the final summation after C2R
+                5. L: for the R2C (real-to-complex) of delta_lm or N00, see FFT_Norm_in_Estimators.md
+
+                Thus, the total scaling is: L^2 * (N^2 / L^2) * N^(-2) * (L/N) * L = L^2 / N
+
+                Since L^2 already appears in delta_lm and N00, we need an additional factor of 1/N for correct normalization.
+                """
 
 
             if S3_fft_source_current is not None:

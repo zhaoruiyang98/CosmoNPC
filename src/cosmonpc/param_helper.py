@@ -73,7 +73,6 @@ def validate_boolean_fields(config):
     bool_fields = [
         "interlaced",
         "compensation",
-        "use_fast_mode",
         "apply_rsd",
         "use_parent_dir",
     ]
@@ -92,6 +91,14 @@ def validate_config(config):
     if "shotnoise-mode" in config and "shotnoise_mode" not in config:
         config["shotnoise_mode"] = config.pop("shotnoise-mode")
 
+    if "high_order_mode" not in config:
+        if "use_fast_mode" in config:
+            config["high_order_mode"] = "fast" if config.pop("use_fast_mode") else "default"
+        else:
+            config["high_order_mode"] = "default"
+    elif "use_fast_mode" in config:
+        config.pop("use_fast_mode")
+
     assert config["sampler"] in [
         "ngp",
         "cic",
@@ -104,6 +111,28 @@ def validate_config(config):
     shotnoise_mode = config.setdefault("shotnoise_mode", "ana")
     if shotnoise_mode not in ["ana", "fft", "both"]:
         raise ValueError("shotnoise_mode must be either 'ana', 'fft', or 'both'")
+
+    high_order_mode = config["high_order_mode"]
+    if high_order_mode not in ["default", "fast", "compare"]:
+        raise ValueError(
+            "high_order_mode must be one of 'default', 'fast', or 'compare'"
+        )
+
+    if high_order_mode in ["fast", "compare"]:
+        supported_poles = [[0, 2, 4], [0, 2, 4, 6], [0, 2, 4, 6, 8]]
+        if config.get("statistic") != "pk" or config.get("geometry") != "survey-like":
+            raise ValueError(
+                "high_order_mode 'fast' and 'compare' are only supported for survey-like pk measurements"
+            )
+        if config.get("correlation_mode") != "auto":
+            raise ValueError(
+                "high_order_mode 'fast' and 'compare' are only supported for auto-correlation"
+            )
+        if config.get("poles") not in supported_poles:
+            raise ValueError(
+                f"high_order_mode '{high_order_mode}' only supports poles {supported_poles}"
+            )
+
     validate_boolean_fields(config)
 
 

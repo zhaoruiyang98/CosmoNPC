@@ -46,15 +46,19 @@ CONFIG = {
     # k_bins: k-space bins
     "k_bins": 30,
     # poles: Multipole orders
-    "poles": [0, 2, 4, 6, 8 ],
+    "poles": [0, 2, 4, 6 ],
     # compensation: Mesh compensation
     "compensation": True,
     # normalization_scheme: Pk normalization
     "normalization_scheme": "particle",  # "particle" or "mixed-mesh"
     # alpha_scheme: how to compute alpha (pypower or nbodykit)
     "alpha_scheme": "nbodykit",
-    # Fast mode regarding using legendre expansion of P4 or higher orders,
-    "use_fast_mode": False,  
+    # High-order multipole strategy for survey pk:
+    # "default": exact outputs only
+    # "fast": [0,2,4] -> P4b; [0,2,4,6] -> P4 + P6b; [0,2,4,6,8] -> P4 + P6b + P8b
+    # "compare": [0,2,4] -> P4 + P4b; [0,2,4,6] -> P4 + P6 + P4b + P6b;
+    #            [0,2,4,6,8] -> P4 + P6 + P8 + P4b + P6b + P8b
+    "high_order_mode": "compare",
     # Para_cosmo (for .npy/box-like catalogs, cosmology parameters not used)
     "cosmology": {
         "h": 0.676,  # Hubble parameter

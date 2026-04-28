@@ -109,6 +109,7 @@ mpirun -n 4 python example.py
 - `shotnoise_mode`: `ana`, `fft`, or `both`
 - `normalization_scheme`: normalization mode
 - `alpha_scheme`: survey alpha convention
+- `high_order_mode`: `default`, `fast`, or `compare` for survey `pk` high-order multipoles
 - `output_dir`: output directory
 
 ## Input Formats
